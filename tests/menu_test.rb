@@ -95,3 +95,81 @@ fixture do |root|
   assert(menu.calls.empty?)
 end
 puts 'PASS: master addition, cross-role uniqueness and Rancher version guard'
+
+class TestMenu
+  attr_accessor :live_nodes
+  def capture(*args)
+    JSON.generate('items' => @live_nodes)
+  end
+end
+
+def three_masters(root)
+  data=YAML.load_file(root+'/ansible/inventory.yml')
+  (2..3).each { |i| data['all']['children']['server']['hosts']["k3s-master#{i}"]={'ansible_host'=>"192.168.58.#{10+i}", 'vagrant_id'=>"k3s-master#{i}"} }
+  File.write(root+'/ansible/inventory.yml',YAML.dump(data))
+  (1..3).map do |i|
+    {'metadata'=>{'name'=>"k3s-master#{i}",'labels'=>{'node-role.kubernetes.io/etcd'=>'true'},'annotations'=>{'etcd.k3s.cattle.io/node-name'=>"k3s-master#{i}-abc"}},'status'=>{'conditions'=>[{'type'=>'Ready','status'=>'True'}]}}
+  end
+end
+fixture do |root|
+  FileUtils.rm_rf(root+'/.vagrant')
+  menu=TestMenu.new(root,['3','4','1'])
+  menu.create_cluster
+  data=YAML.load_file(root+'/ansible/inventory.yml')
+  assert(data['all']['children']['server']['hosts'].length==3)
+  assert(data['all']['children']['workers']['hosts'].length==4)
+  addresses=data['all']['children'].values.flat_map { |g| g['hosts'].values.map { |h| h['ansible_host'] } }
+  assert(addresses.uniq.length==7 && addresses.include?('192.168.58.13') && addresses.include?('192.168.58.24'))
+  assert(menu.calls==[['./cluster.sh','up','--verify']])
+end
+fixture do |root|
+  before=File.read(root+'/ansible/inventory.yml')
+  menu=TestMenu.new(root,['3','2','1'])
+  begin menu.create_cluster; rescue RuntimeError; end
+  assert(menu.calls.empty? && File.read(root+'/ansible/inventory.yml')==before)
+  FileUtils.rm_rf(root+'/.vagrant')
+  menu=TestMenu.new(root,['3','2','0'])
+  menu.create_cluster
+  assert(menu.calls.empty? && File.read(root+'/ansible/inventory.yml')==before)
+  menu=TestMenu.new(root,['0'])
+  begin menu.create_cluster; rescue RuntimeError; end
+  assert(menu.calls.empty?)
+end
+fixture do |root|
+  live=three_masters(root)
+  before=File.read(root+'/ansible/inventory.yml')
+  menu=TestMenu.new(root,['1'])
+  menu.live_nodes=live
+  begin menu.remove_master; rescue RuntimeError; end
+  assert(menu.calls.empty? && File.read(root+'/ansible/inventory.yml')==before)
+  menu=TestMenu.new(root,['3','1'])
+  menu.live_nodes=Marshal.load(Marshal.dump(live))
+  menu.live_nodes[0]['status']['conditions'][0]['status']='False'
+  begin menu.remove_master; rescue RuntimeError; end
+  assert(menu.calls.empty? && File.read(root+'/ansible/inventory.yml')==before)
+  menu=TestMenu.new(root,['3','1'],'wait')
+  menu.live_nodes=live
+  begin menu.remove_master; rescue RuntimeError; end
+  assert(menu.calls.any? { |c| c.include?('annotate') })
+  assert(!menu.calls.any? { |c| c.include?('destroy') })
+  assert(File.read(root+'/ansible/inventory.yml')==before)
+  menu=TestMenu.new(root,['3','1'])
+  menu.live_nodes=live
+  menu.remove_master
+  commands=menu.calls
+  assert(commands.index { |c| c.include?('drain') } < commands.index { |c| c.include?('annotate') })
+  assert(commands.index { |c| c.include?('wait') } < commands.index { |c| c.include?('destroy') })
+  assert(commands.any? { |c| c.any? { |a| a.include?('etcd\\.k3s\\.cattle\\.io/removed-node-name') } })
+  assert(YAML.load_file(root+'/ansible/inventory.yml')['all']['children']['server']['hosts'].length==2)
+end
+fixture do |root|
+  live=three_masters(root)
+  annotations=live[2]['metadata']['annotations']
+  annotations['etcd.k3s.cattle.io/removed-node-name']=annotations.delete('etcd.k3s.cattle.io/node-name')
+  menu=TestMenu.new(root,['3','1'])
+  menu.live_nodes=live
+  menu.remove_master
+  assert(menu.calls.first==['vagrant','destroy','-f','k3s-master3'])
+  assert(!menu.calls.any? { |c| c.include?('annotate') })
+end
+puts 'PASS: topology counts and cancellation, existing VM guard, primary/health guards, etcd acknowledgement before deletion, interrupted removal recovery'

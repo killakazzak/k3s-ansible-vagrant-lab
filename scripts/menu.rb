@@ -2,6 +2,8 @@
 require 'yaml'
 require 'ipaddr'
 require 'fileutils'
+require 'json'
+require 'open3'
 
 class ClusterMenu
   def initialize(root)
@@ -24,6 +26,60 @@ class ClusterMenu
 
   def run(*args)
     raise "Команда завершилась с ошибкой: #{args.first}" unless system(*args, chdir: @root)
+  end
+
+  def capture(*args)
+    output, error, status = Open3.capture3(*args, chdir: @root)
+    raise "Команда завершилась с ошибкой: #{args.first}: #{error.strip}" unless status.success?
+    output
+  end
+
+  def count(prompt, default, maximum)
+    value = ask("#{prompt} [#{default}], Enter — оставить")
+    return default if value.empty?
+    raise "Нужно целое число от 1 до #{maximum}" unless value.match?(/\A[1-9]\d*\z/) && value.to_i <= maximum
+    value.to_i
+  end
+
+  def create_cluster
+    data = inventory
+    masters = count('Сколько master', hosts(data, 'server').length, 7)
+    workers = count('Сколько workers', hosts(data, 'workers').length, 32)
+    raise 'Для нескольких master включите k3s_embedded_etcd' if masters > 1 && !settings['k3s_embedded_etcd']
+    changed = masters != hosts(data, 'server').length || workers != hosts(data, 'workers').length
+    if changed && !Dir.glob(File.join(@root, '.vagrant/machines/*/*/id')).empty?
+      raise 'VM уже существуют. Меняйте состав пунктами 5/6/9/10 либо сначала удалите кластер пунктом 2. Текущие VM и inventory не изменены.'
+    end
+    if changed
+      cfg = settings
+      first_ip = hosts(data, 'server').values.first.fetch('ansible_host')
+      network = IPAddr.new("#{first_ip}/#{cfg['private_network_prefix']}")
+      prefix = cfg.fetch('menu_node_prefix', 'k3s')
+      raise 'Некорректный menu_node_prefix' unless prefix.match?(/\A[a-z][a-z0-9-]{0,40}\z/)
+      generated = {'all' => {'children' => {}}}
+      [['server', 'master', masters, cfg.fetch('menu_master_ip_start', 11)],
+       ['workers', 'worker', workers, cfg.fetch('menu_worker_ip_start', 21)]].each do |group, role, size, offset|
+        entries = {}
+        size.times do |i|
+          address = IPAddr.new(network.to_i + Integer(offset) + i, Socket::AF_INET)
+          raise 'Адрес узла вне подсети или совпадает с network/broadcast' unless network.include?(address) && address != network.to_range.first && address != network.to_range.last
+          name = "#{prefix}-#{role}#{i + 1}"
+          entries[name] = {'ansible_host' => address.to_s, 'vagrant_id' => name}
+        end
+        generated['all']['children'][group] = {'hosts' => entries}
+      end
+      ips = generated['all']['children'].values.flat_map { |g| g['hosts'].values.map { |h| h['ansible_host'] } }
+      raise 'Диапазоны адресов master и worker пересекаются' unless ips.uniq == ips
+      data = generated
+    end
+    puts 'Чётное число master не увеличивает устойчивость etcd относительно предыдущего нечётного; обычно выбирают 1, 3 или 5.' if masters.even?
+    cfg = settings
+    total_ram = data['all']['children'].sum { |role, g| g['hosts'].values.sum { |h| h.fetch('vm_memory_mb', cfg['vm_memory_mb'][role]) } }
+    puts "Итого: #{masters} master, #{workers} workers, #{total_ram} MB RAM для VM."
+    data['all']['children'].each_value { |g| g['hosts'].each { |name, h| puts "  #{name}: #{h['ansible_host']}" } }
+    return unless confirm('Создать / применить этот состав кластера?')
+    write(@inventory, YAML.dump(data)) if changed
+    run('./cluster.sh', 'up', '--verify')
   end
 
   def settings
@@ -121,6 +177,56 @@ class ClusterMenu
     puts 'Worker удалён.'
   end
 
+  def remove_master
+    data = inventory
+    masters = hosts(data, 'server')
+    raise 'Последний master нельзя удалить отдельно. Для удаления всего кластера используйте пункт 2.' if masters.length <= 1
+    primary = masters.keys.first
+    names = masters.keys
+    names.each_with_index { |name, i| puts "#{i + 1}. #{name}#{name == primary ? ' (первый master, защищён)' : ''}" }
+    value = ask('Номер master (0 — отмена)')
+    return if value == '0'
+    raise 'Неверный номер' unless value.match?(/\A[1-9]\d*\z/) && value.to_i <= names.length
+    name = names[value.to_i - 1]
+    raise 'Первый master хранит адрес API и Rancher. Его отдельное удаление не поддерживается; используйте пересоздание кластера.' if name == primary
+    raise 'Удаление master требует embedded etcd' unless settings['k3s_embedded_etcd']
+    live = JSON.parse(capture('./kubectl.sh', 'get', 'nodes', '-o', 'json', '--request-timeout=15s')).fetch('items')
+    target = live.find { |n| n['metadata']['name'] == name }
+    if !target
+      id = File.join(@root, '.vagrant/machines', masters[name]['vagrant_id'], settings['vm_provider'], 'id')
+      raise 'Узел отсутствует в Kubernetes, но VM ещё существует. Требуется проверка состава etcd вручную.' if File.exist?(id)
+      return unless confirm("VM и Node #{name} уже отсутствуют. Удалить оставшуюся запись inventory?")
+      masters.delete(name)
+      write(@inventory, YAML.dump(data))
+      return
+    end
+    annotations = target['metadata'].fetch('annotations', {})
+    removed = annotations['etcd.k3s.cattle.io/removed-node-name']
+    member_name = annotations['etcd.k3s.cattle.io/node-name']
+    already_removed = removed && !removed.empty? && !member_name
+    unless already_removed
+      actual = live.select { |n| n['metadata'].fetch('labels', {}).key?('node-role.kubernetes.io/etcd') }
+      raise 'Состав etcd-узлов Kubernetes не совпадает с inventory; сначала устраните расхождение.' unless actual.map { |n| n['metadata']['name'] }.sort == names.sort
+      raise 'Все master должны быть Ready перед изменением etcd.' unless actual.all? { |n| n.fetch('status', {}).fetch('conditions', []).any? { |c| c['type'] == 'Ready' && c['status'] == 'True' } }
+      raise 'У master отсутствует имя etcd-member' unless member_name && member_name.match?(/\A[a-zA-Z0-9_.-]+\z/)
+    end
+    puts "После удаления останется #{masters.length - 1} master. При 1 или 2 master отказ одного узла останавливает control plane." if masters.length <= 3
+    return unless confirm("Удалить #{name}? Сначала snapshot и drain, затем исключение из etcd. VM и её локальные данные будут удалены только после подтверждения k3s.")
+    unless already_removed
+      run('./kubectl.sh', 'get', '--raw=/readyz', '--request-timeout=15s')
+      run('vagrant', 'ssh', masters[primary]['vagrant_id'], '-c', 'sudo k3s etcd-snapshot save')
+      run('./kubectl.sh', 'drain', name, '--ignore-daemonsets', '--delete-emptydir-data', '--timeout=180s')
+      run('./kubectl.sh', 'annotate', 'node', name, 'etcd.k3s.cattle.io/remove=true', '--overwrite')
+      run('./kubectl.sh', 'wait', "node/#{name}", "--for=jsonpath={.metadata.annotations.etcd\\.k3s\\.cattle\\.io/removed-node-name}=#{member_name}", '--timeout=180s')
+    end
+    run('vagrant', 'destroy', '-f', masters[name]['vagrant_id'])
+    run('./kubectl.sh', 'delete', 'node', name, '--ignore-not-found=true')
+    masters.delete(name)
+    write(@inventory, YAML.dump(data))
+    run('./kubectl.sh', 'wait', '--for=condition=Ready', *masters.keys.map { |n| "node/#{n}" }, '--timeout=180s')
+    puts 'Master исключён из etcd и удалён.'
+  end
+
   def resources
     data = inventory
     nodes = data['all']['children'].values.flat_map { |g| g['hosts'].to_a }
@@ -167,10 +273,10 @@ class ClusterMenu
   def start
     loop do
       show
-      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n0. Выход"
+      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n0. Выход"
       begin
         case ask('Выбери номер')
-        when '1' then run('./cluster.sh', 'up', '--verify')
+        when '1' then create_cluster
         when '2'
           run('./cluster.sh', 'destroy') if confirm('Удалить все VM этого кластера вместе с данными?')
         when '3'
@@ -182,6 +288,7 @@ class ClusterMenu
         when '7' then resources
         when '8' then version
         when '9' then add_master
+        when '10' then remove_master
         when '0' then break
         else puts 'Выбери номер из меню.'
         end
