@@ -6,7 +6,7 @@ cd "$ROOT"
 started_at=$SECONDS
 if [[ "${1:-}" == "--help" ]]; then
   echo 'Usage: ./deploy.sh [--verify]'
-  echo 'Requires Apple Silicon, Homebrew and an activated Parallels Pro/Business/Enterprise.'
+  echo 'Requires Apple Silicon, Homebrew and VirtualBox 7.2 or newer.'
   echo 'Installs missing tools, creates VMs, applies Ansible; --verify adds network tests.'
   exit 0
 fi
@@ -17,16 +17,22 @@ fi
   echo 'This configuration requires an Apple Silicon Mac.' >&2; exit 1;
 }
 command -v brew >/dev/null || { echo 'Install Homebrew first: https://brew.sh' >&2; exit 1; }
-command -v prlctl >/dev/null || {
-  echo 'Install and activate Parallels Desktop Pro/Business/Enterprise first.' >&2; exit 1;
-}
 setting() { ruby -ryaml -e 'puts YAML.load_file(ARGV[0]).fetch(ARGV[1])' "$ROOT/ansible/group_vars/all.yml" "$1"; }
 command -v vagrant >/dev/null || brew install --cask vagrant
 command -v ansible-playbook >/dev/null || brew install ansible
-plugin_version="$(setting vagrant_parallels_version)"
-if ! vagrant plugin list | grep -F "vagrant-parallels ($plugin_version," >/dev/null; then
-  vagrant plugin install vagrant-parallels --plugin-version "$plugin_version"
-fi
+case "$(setting vm_provider)" in
+  virtualbox)
+    command -v VBoxManage >/dev/null || { echo 'Install VirtualBox for Apple Silicon: https://www.virtualbox.org/wiki/Downloads' >&2; exit 1; }
+    ;;
+  parallels)
+    command -v prlctl >/dev/null || { echo 'Install and activate Parallels Pro/Business/Enterprise.' >&2; exit 1; }
+    plugin_version="$(setting vagrant_parallels_version)"
+    if ! vagrant plugin list | grep -F "vagrant-parallels ($plugin_version," >/dev/null; then
+      vagrant plugin install vagrant-parallels --plugin-version "$plugin_version"
+    fi
+    ;;
+  *) echo 'Supported providers: virtualbox, parallels.' >&2; exit 1 ;;
+esac
 # Keep kubectl compatible with the configured API instead of Homebrew's latest minor.
 kubernetes_version="$(setting k3s_version)"
 kubernetes_version="${kubernetes_version%%+*}"

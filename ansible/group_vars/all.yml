@@ -1,5 +1,5 @@
 # Plain YAML values below are also read by Vagrant/deploy.sh.
-vm_provider: parallels
+vm_provider: virtualbox
 vm_box: bento/ubuntu-24.04
 vm_box_version: '202510.26.0'
 vm_architecture: arm64
