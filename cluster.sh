@@ -7,16 +7,20 @@ cd "$ROOT"
 export VAGRANT_CWD="$ROOT"
 export VAGRANT_DOTFILE_PATH="$ROOT/.vagrant"
 usage() {
-  echo 'Usage: ./cluster.sh {up [--verify]|destroy|status|verify}'
+  echo 'Usage: ./cluster.sh {menu|up [--verify]|destroy|status|verify}'
   echo 'up       Create/start the cluster and apply Ansible.'
   echo 'destroy  Delete the VMs of this project and their data without a prompt.'
   echo '         Removes local kubeconfig after successful deletion; preserves download caches.'
   echo 'status   Show VM status.'
   echo 'verify   Run Kubernetes network and Traefik tests.'
 }
-command_name="${1:---help}"
+command_name="${1:-menu}"
 [[ $# -eq 0 ]] || shift
 case "$command_name" in
+  menu)
+    [[ $# -eq 0 ]] || { usage >&2; exit 2; }
+    exec ruby "$ROOT/scripts/menu.rb"
+    ;;
   up) exec "$ROOT/deploy.sh" "$@" ;;
   destroy|status|verify)
     [[ $# -eq 0 ]] || { usage >&2; exit 2; }
