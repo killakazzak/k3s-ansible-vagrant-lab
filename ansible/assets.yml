@@ -1,0 +1,29 @@
+---
+- name: Cache verified k3s release once on the Mac
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files: [group_vars/all.yml]
+  vars:
+    ansible_become: false
+    ansible_ssh_private_key_file: ""
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Create local cache
+      ansible.builtin.file:
+        path: "{{ asset_cache }}"
+        state: directory
+        mode: '0700'
+    - name: Download ARM64 binary with release checksum
+      ansible.builtin.get_url:
+        url: "{{ k3s_release_url }}/k3s-arm64"
+        checksum: "sha256:{{ k3s_release_url }}/sha256sum-arm64.txt"
+        dest: "{{ asset_cache }}/k3s-arm64"
+        mode: '0755'
+        timeout: "{{ download_timeout }}"
+    - name: Download installer from the same release tag
+      ansible.builtin.get_url:
+        url: "{{ k3s_installer_url }}"
+        dest: "{{ asset_cache }}/install.sh"
+        mode: '0644'
+        timeout: "{{ download_timeout }}"

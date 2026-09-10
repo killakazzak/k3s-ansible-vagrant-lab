@@ -1,0 +1,241 @@
+---
+- import_playbook: assets.yml
+
+- name: Prepare all three nodes in parallel
+  hosts: all
+  become: true
+  any_errors_fatal: true
+  tasks:
+    - name: Check topology
+      ansible.builtin.assert:
+        that:
+          - groups['server'] | length == 1
+          - groups['workers'] | length >= 1
+          - dns_servers | length > 0
+      run_once: true
+    - name: Check installed k3s version before changing anything
+      ansible.builtin.command: /usr/local/bin/k3s --version
+      register: installed_version
+      changed_when: false
+      failed_when: false
+    - name: Require deliberate approval for changing an existing k3s version
+      ansible.builtin.assert:
+        that: installed_version.rc != 0 or k3s_version in installed_version.stdout or allow_version_change | bool
+        fail_msg: Existing k3s version differs. This deploy playbook is not a rolling upgrade tool. Back up first; use the documented upgrade procedure.
+    - name: Find private interface on each node
+      ansible.builtin.set_fact:
+        cluster_interface: "{{ item }}"
+      loop: "{{ ansible_facts.interfaces }}"
+      when: ansible_facts[item].ipv4.address | default('') == node_ip
+    - name: Validate private interface exists
+      ansible.builtin.assert:
+        that: cluster_interface is defined
+    - name: Create configuration directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /etc/systemd/resolved.conf.d
+        - /etc/rancher/k3s
+        - /usr/local/lib/k3s
+    - name: Configure DNS and a private resolver for bundled CoreDNS
+      ansible.builtin.copy:
+        dest: /etc/systemd/resolved.conf.d/60-k3s-lab.conf
+        mode: '0644'
+        content: |
+          [Resolve]
+          DNS={{ dns_servers | join(' ') }}
+          DNSOverTLS={{ 'yes' if dns_over_tls else 'no' }}
+          Domains=~.
+          DNSStubListenerExtra={{ node_ip }}
+      register: resolver_config
+    - name: Apply resolver configuration
+      ansible.builtin.systemd_service:
+        name: systemd-resolved
+        state: restarted
+      when: resolver_config.changed
+    - name: Use node resolver for Pod upstream DNS
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/resolv.conf
+        mode: '0644'
+        content: "nameserver {{ node_ip }}\n"
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+    - name: Persist kernel modules
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k3s.conf
+        mode: '0644'
+        content: "overlay\nbr_netfilter\n"
+    - name: Load kernel modules
+      ansible.builtin.command: "modprobe {{ item }}"
+      loop: [overlay, br_netfilter]
+      changed_when: false
+    - name: Enable forwarding
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-k3s.conf
+        mode: '0644'
+        content: |
+          net.ipv4.ip_forward = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+      register: sysctl_config
+    - name: Apply forwarding
+      ansible.builtin.command: sysctl --system
+      when: sysctl_config.changed
+    - name: Inspect active swap
+      ansible.builtin.command: swapon --show --noheadings
+      register: active_swap
+      changed_when: false
+    - name: Disable active swap
+      ansible.builtin.command: swapoff -a
+      when: active_swap.stdout | length > 0
+    - name: Disable swap at boot
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^(\s*[^#\n]+\s+\S+\s+swap\s+.*)$'
+        replace: '# k3s: \1'
+    - name: Distribute cached binary
+      ansible.builtin.copy:
+        src: "{{ asset_cache }}/k3s-arm64"
+        dest: /usr/local/bin/k3s
+        mode: '0755'
+      register: k3s_binary
+    - name: Distribute pinned installer
+      ansible.builtin.copy:
+        src: "{{ asset_cache }}/install.sh"
+        dest: /usr/local/lib/k3s/install.sh
+        mode: '0644'
+
+- name: Start single k3s server
+  hosts: "{{ groups['server'][0] }}"
+  become: true
+  tasks:
+    - name: Render server configuration
+      ansible.builtin.template:
+        src: config.yaml.j2
+        dest: /etc/rancher/k3s/config.yaml
+        mode: '0600'
+      register: server_config
+    - name: Check server service
+      ansible.builtin.stat:
+        path: /etc/systemd/system/k3s.service
+      register: server_service
+    - name: Install server service without another download
+      ansible.builtin.command: sh /usr/local/lib/k3s/install.sh
+      environment:
+        INSTALL_K3S_SKIP_DOWNLOAD: 'true'
+        INSTALL_K3S_SKIP_START: 'true'
+        INSTALL_K3S_EXEC: server
+      when: k3s_binary.changed or not server_service.stat.exists
+    - name: Enable and start server
+      ansible.builtin.systemd_service:
+        name: k3s
+        enabled: true
+        daemon_reload: true
+        state: "{{ 'restarted' if server_config.changed or k3s_binary.changed else 'started' }}"
+    - name: Wait for server API
+      ansible.builtin.command: k3s kubectl get --raw=/readyz
+      register: api_ready
+      retries: 60
+      delay: 2
+      until: api_ready.rc == 0
+      changed_when: false
+    - name: Read generated secure agent token
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/agent-token
+      register: agent_token
+      no_log: true
+
+- name: Join workers in parallel
+  hosts: workers
+  become: true
+  tasks:
+    - name: Store agent credential privately
+      ansible.builtin.copy:
+        content: "{{ hostvars[server_node].agent_token.content | b64decode }}"
+        dest: /etc/rancher/k3s/agent-token
+        mode: '0600'
+      register: token_file
+      no_log: true
+    - name: Render worker configuration
+      ansible.builtin.template:
+        src: config.yaml.j2
+        dest: /etc/rancher/k3s/config.yaml
+        mode: '0600'
+      register: worker_config
+    - name: Check worker service
+      ansible.builtin.stat:
+        path: /etc/systemd/system/k3s-agent.service
+      register: worker_service
+    - name: Install worker service without another download
+      ansible.builtin.command: sh /usr/local/lib/k3s/install.sh
+      environment:
+        INSTALL_K3S_SKIP_DOWNLOAD: 'true'
+        INSTALL_K3S_SKIP_START: 'true'
+        INSTALL_K3S_EXEC: agent
+      when: k3s_binary.changed or not worker_service.stat.exists
+    - name: Enable and start worker
+      ansible.builtin.systemd_service:
+        name: k3s-agent
+        enabled: true
+        daemon_reload: true
+        state: "{{ 'restarted' if worker_config.changed or k3s_binary.changed or token_file.changed else 'started' }}"
+
+- name: Export access and wait for cluster readiness
+  hosts: "{{ groups['server'][0] }}"
+  become: true
+  tasks:
+    - name: Wait for every expected node to register
+      ansible.builtin.command: "k3s kubectl get node {{ item }}"
+      loop: "{{ groups['all'] }}"
+      register: registered_node
+      retries: 30
+      delay: 2
+      until: registered_node.rc == 0
+      changed_when: false
+    - name: Set worker role through the Kubernetes API
+      ansible.builtin.command: k3s kubectl label node {{ item }} node-role.kubernetes.io/worker=true --overwrite
+      loop: "{{ groups['workers'] }}"
+      register: worker_label
+      changed_when: "'not labeled' not in worker_label.stdout"
+    - name: Wait for all nodes Ready
+      ansible.builtin.command: k3s kubectl wait --for=condition=Ready nodes --all --timeout={{ node_ready_timeout }}s
+      changed_when: false
+    - name: Wait for bundled CoreDNS
+      ansible.builtin.command: k3s kubectl -n kube-system rollout status deployment/coredns --timeout={{ rollout_timeout }}s
+      changed_when: false
+    - name: Wait for Traefik deployment creation
+      ansible.builtin.command: k3s kubectl -n kube-system get deployment traefik
+      register: traefik_created
+      retries: 90
+      delay: 2
+      until: traefik_created.rc == 0
+      changed_when: false
+      when: "'traefik' not in disabled_components"
+    - name: Wait for Traefik readiness
+      ansible.builtin.command: k3s kubectl -n kube-system rollout status deployment/traefik --timeout={{ rollout_timeout }}s
+      changed_when: false
+      when: "'traefik' not in disabled_components"
+    - name: Read kubeconfig
+      ansible.builtin.slurp:
+        src: /etc/rancher/k3s/k3s.yaml
+      register: server_kubeconfig
+      no_log: true
+    - name: Write private kubeconfig with reachable server endpoint
+      ansible.builtin.copy:
+        content: "{{ server_kubeconfig.content | b64decode | regex_replace('https://127[.]0[.]0[.]1:[0-9]+', api_url) }}"
+        dest: "{{ playbook_dir }}/../kubeconfig"
+        mode: '0600'
+      delegate_to: localhost
+      vars:
+        ansible_become: false
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      no_log: true
+    - name: Show nodes
+      ansible.builtin.command: k3s kubectl get nodes -o wide
+      register: nodes
+      changed_when: false
+    - ansible.builtin.debug:
+        var: nodes.stdout_lines

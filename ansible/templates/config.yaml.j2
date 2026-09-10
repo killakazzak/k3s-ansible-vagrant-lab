@@ -1,0 +1,21 @@
+node-name: {{ inventory_hostname }}
+node-ip: {{ node_ip }}
+flannel-iface: {{ cluster_interface }}
+resolv-conf: /etc/rancher/k3s/resolv.conf
+{% if inventory_hostname in groups['server'] %}
+https-listen-port: {{ api_port }}
+advertise-address: {{ node_ip }}
+tls-san:
+  - {{ node_ip }}
+write-kubeconfig-mode: '0600'
+cluster-cidr: {{ pod_subnet }}
+service-cidr: {{ service_subnet }}
+cluster-dns: {{ cluster_dns }}
+cluster-domain: {{ cluster_domain }}
+flannel-backend: {{ flannel_backend }}
+disable: {{ disabled_components | to_json }}
+node-taint: {{ server_taints | to_json }}
+{% else %}
+server: {{ api_url }}
+token-file: /etc/rancher/k3s/agent-token
+{% endif %}

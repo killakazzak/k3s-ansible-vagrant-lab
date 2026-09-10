@@ -1,0 +1,54 @@
+# Plain YAML values below are also read by Vagrant/deploy.sh.
+vm_provider: parallels
+vm_box: bento/ubuntu-24.04
+vm_box_version: '202510.26.0'
+vm_architecture: arm64
+vm_name_prefix: ''
+vm_cpus: {server: 2, workers: 1}
+vm_memory_mb: {server: 2048, workers: 1024}
+vm_boot_timeout: 300
+private_network_prefix: 24
+vagrant_parallels_version: '2.4.9'
+k3s_version: v1.36.4+k3s1
+
+ansible_user: vagrant
+ansible_become: "{{ inventory_hostname != 'localhost' }}"
+ansible_python_interpreter: "{{ ansible_playbook_python if inventory_hostname == 'localhost' else '/usr/bin/python3' }}"
+ansible_ssh_private_key_file: "{{ (inventory_dir + '/../.vagrant/machines/' + vagrant_id + '/' + vm_provider + '/private_key') if inventory_hostname != 'localhost' else '' }}"
+node_ip: "{{ ansible_host }}"
+server_node: "{{ groups['server'][0] }}"
+api_port: 6443
+api_url: "https://{{ hostvars[server_node].ansible_host }}:{{ api_port }}"
+cluster_domain: cluster.local
+pod_subnet: 10.42.0.0/16
+service_subnet: 10.43.0.0/16
+cluster_dns: 10.43.0.10
+flannel_backend: vxlan
+# Fast/minimal profile; remove items to enable bundled components on a new cluster.
+disabled_components: [metrics-server]
+server_taints: ['node-role.kubernetes.io/control-plane:NoSchedule']
+dns_servers: [1.1.1.1, 1.0.0.1]
+dns_over_tls: true
+node_ready_timeout: 300
+rollout_timeout: 180
+download_timeout: 120
+# Existing versions are never changed implicitly by deploy.sh.
+allow_version_change: false
+k3s_release_url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_version }}"
+k3s_installer_url: "https://raw.githubusercontent.com/k3s-io/k3s/{{ k3s_version }}/install.sh"
+asset_cache: "{{ playbook_dir }}/../.cache/{{ k3s_version }}"
+smoke_namespace: k3s-smoke
+smoke_web_image: nginx:1.28-alpine
+smoke_client_image: busybox:1.37
+smoke_client_node: "{{ groups['workers'][0] }}"
+smoke_client_lifetime: 600
+smoke_http_timeout: 10
+smoke_external_domain: kubernetes.io
+smoke_web_resources:
+  requests: {cpu: 25m, memory: 32Mi}
+  limits: {cpu: 200m, memory: 96Mi}
+smoke_client_resources:
+  requests: {cpu: 10m, memory: 16Mi}
+  limits: {cpu: 100m, memory: 32Mi}
+
+smoke_ingress_host: k3s-smoke.test

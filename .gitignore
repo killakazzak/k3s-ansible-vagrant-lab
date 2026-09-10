@@ -1,0 +1,31 @@
+# Runtime state and credentials
+.vagrant/
+kubeconfig
+kubeconfig.*
+admin.conf
+super-admin.conf
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+private_key
+id_rsa*
+id_ed25519*
+.env
+.env.*
+!.env.example
+
+# Local diagnostics and backups
+*.log
+*.retry
+*.bak
+*.before-*
+.DS_Store
+.venv/
+__pycache__/
+
+# Local CLI downloads
+.tools/
+
+.cache/
