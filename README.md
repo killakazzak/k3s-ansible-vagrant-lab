@@ -1,6 +1,6 @@
 # k3s: один master и два worker на Mac
 
-Локальная лаборатория Kubernetes на Ubuntu 24.04: Vagrant создаёт три VM в VirtualBox, Ansible устанавливает k3s. Traefik и ServiceLB включены. Один сервер использует встроенную SQLite; это лаборатория без отказоустойчивости control plane.
+Локальная лаборатория Kubernetes на Ubuntu 24.04: Vagrant создаёт три VM в VirtualBox, Ansible устанавливает k3s. Traefik и ServiceLB включены. По умолчанию один master со встроенным etcd и два workers. Можно добавить master через меню; отказоустойчивость etcd требует минимум трёх master. Rancher устанавливается автоматически через Traefik.
 
 ## Меню с цифрами
 
@@ -22,11 +22,12 @@
 | 6 | Удалить выбранный worker после drain |
 | 7 | Изменить CPU/RAM узла и перезагрузить VM |
 | 8 | Выбрать точную версию k3s и пересоздать лабораторию |
+| 9 | Добавить master (embedded etcd) |
 | 0 | Выйти |
 
 **Пункт 8 удаляет данные существующего кластера после подтверждения.** Это пересоздание, не rolling upgrade. Сначала проверяется наличие релиза на GitHub. Для обновления с сохранением данных см. раздел «Изменение версии». При ошибке сети проверка релиза останавливается до удаления VM.
 
-Поддерживается один master и один или несколько workers. Удаление worker останавливается, если drain не прошёл; автоматического обхода PodDisruptionBudget нет. Данные emptyDir и диска удаляемого worker теряются, локальные PV автоматически не мигрируют. CPU/RAM меняются для выбранного узла; при перезагрузке master API временно недоступен.
+Поддерживается один или несколько master и один или несколько workers. Удаление worker останавливается, если drain не прошёл; автоматического обхода PodDisruptionBudget нет. Данные emptyDir и диска удаляемого worker теряются, локальные PV автоматически не мигрируют. CPU/RAM меняются для выбранного узла; при перезагрузке master API временно недоступен.
 
 Перед изменением YAML меню сохраняет копию в `.cache/menu-backups/`. Эти копии не включают данные приложений. Свободный IP нового worker нужно выбрать с учётом других устройств сети. Если применение завершается ошибкой, настройки остаются записанными — исправьте причину и повторите пункт 1. Настройки версии защищены от неявного обновления существующих VM.
 
@@ -47,7 +48,7 @@
 
 ## Развёртывание с нуля
 
-Нужен Mac **Apple Silicon**, Homebrew и установленный **VirtualBox 7.2 или новее для Apple Silicon** с доступным `VBoxManage`. Для VM выделяется суммарно 4 ГБ RAM и 4 vCPU; оставьте ресурсы macOS и приложениям. Нужны интернет и свободное место для трёх дисков Ubuntu. Intel Mac этим проектом не поддерживается.
+Нужен Mac **Apple Silicon**, Homebrew и установленный **VirtualBox 7.2 или новее для Apple Silicon** с доступным `VBoxManage`. Для VM выделяется суммарно 12 ГБ RAM и 6 vCPU; оставьте ресурсы macOS и приложениям. Нужны интернет и свободное место для трёх дисков Ubuntu. Intel Mac этим проектом не поддерживается.
 
 1. Установите Homebrew по https://brew.sh и VirtualBox для Apple Silicon с https://www.virtualbox.org/wiki/Downloads. При запросе macOS разрешите работу сетевых компонентов VirtualBox.
 2. Клонируйте репозиторий (для приватного репозитория нужна авторизация GitHub):
@@ -101,7 +102,7 @@ DNS узлов использует systemd-resolved и отдельный liste
 curl --resolve app.test:80:192.168.58.21 http://app.test/
 ```
 
-DNS-запись или `/etc/hosts` на Mac должны указывать домен приложения на IP worker. TLS-сертификаты и приложения автоматически не создаются. `--verify` создаёт временный nginx на workers и проверяет Ingress, DNS, Service и доступ между Pod, затем удаляет тестовый namespace.
+DNS-запись или `/etc/hosts` на Mac должны указывать домен приложения на IP worker. Для собственных приложений TLS и Service настраиваются отдельно; Rancher и его сертификат устанавливаются автоматически. `--verify` создаёт временный nginx на workers и проверяет Ingress, DNS, Service и доступ между Pod, затем удаляет тестовый namespace.
 
 ## Повторный запуск и управление
 
@@ -122,7 +123,7 @@ vagrant destroy -f k3s-worker2
 ./kubectl.sh delete node k3s-worker2
 ```
 
-После этого удалите worker из inventory. Должен остаться хотя бы один worker. `--delete-emptydir-data` разрешает удаление временных данных Pod; перенос persistent volumes требует отдельного плана. Проект поддерживает ровно один master: добавление masters/HA не реализовано.
+После этого удалите worker из inventory. Должен остаться хотя бы один worker. `--delete-emptydir-data` разрешает удаление временных данных Pod; перенос persistent volumes требует отдельного плана. Master добавляется пунктом 9 меню; подробности ниже.
 
 ## Изменение версии
 
@@ -167,3 +168,48 @@ vagrant ssh k3s-worker1 -c 'sudo journalctl -u k3s-agent -n 100 --no-pager'
 Для нового окружения можно выбрать `vm_provider: parallels` при установленном и активированном Parallels Pro/Business/Enterprise. Не переключайте провайдер у существующих VM простой заменой переменной: Vagrant хранит привязку провайдера в `.vagrant/`. Используйте отдельный каталог клона и другую подсеть для второго окружения.
 
 Проверка сценариев меню без изменения VM: `ruby tests/menu_test.rb`.
+
+
+## Добавление master
+
+Пункт **9** в `./cluster.sh`: укажите уникальное имя (например, `k3s-master2`) и свободный IP (`192.168.58.12`). Для третьего master можно использовать `k3s-master3`, `192.168.58.13`. Либо добавьте запись в группу `server` в inventory и запустите `./cluster.sh up --verify`.
+
+Новые master присоединяются последовательно с отдельным server token; worker использует agent token. `k3s_embedded_etcd: true` включает etcd уже на первом master. Если существующий кластер использует SQLite, Ansible временно остановит k3s, сохранит согласованную копию базы и token на VM и в `.cache/migration/<master>/pre-etcd-backup.tar.gz`, затем выполнит штатную миграцию через `cluster-init`. Архив содержит секреты; храните его отдельно перед удалением VM. Это копия datastore, не резервная копия дисков приложений.
+
+**Два master не выдерживают отказ одного:** для etcd нужен кворум. Для отказоустойчивости нужны минимум три master. Дополнительный master по умолчанию требует 2 vCPU и 4 ГБ RAM. Все VM находятся на одном Mac, поэтому отказ самого Mac не покрывается.
+
+Адрес подключения из kubeconfig и первичного присоединения остаётся IP первого master. Балансировщик API/VIP этим проектом не создаётся. Не удаляйте и не переставляйте первый master в inventory; автоматическое удаление master пока не реализовано. Перед добавлением нужен доступ к первому master. Для полного HA доступа к API требуется отдельный балансировщик.
+
+Документация: [k3s — HA со встроенным etcd](https://docs.k3s.io/datastore/ha-embedded).
+
+## Rancher: установка и вход
+
+`rancher_enabled: true` по умолчанию. Ansible автоматически устанавливает cert-manager **v1.21.1** и Rancher **2.15.1** через встроенный Helm controller k3s. Helm на Mac не требуется. Версии, hostname, число реплик, ресурсы и таймаут вынесены в `ansible/group_vars/all.yml`.
+
+Для текущей сети откройте **[Rancher](https://rancher.192.168.58.11.sslip.io)**. По умолчанию hostname вычисляется из IP первого master; после изменения адресов используйте URL из вывода deploy. `sslip.io` требует работающего DNS. При блокировке DNS rebinding задайте собственный домен и настройте его разрешение на Mac и в кластере.
+
+Логин: `admin`. Получить случайный начальный пароль:
+
+```bash
+./kubectl.sh -n cattle-system get secret bootstrap-secret \
+  -o go-template='{{.data.bootstrapPassword|base64decode}}{{"\n"}}'
+```
+
+При первом входе задайте свой пароль администратора. Пароль не записывается в Git. Сертификат выдаётся внутренним CA Rancher: браузер предупредит о недоверенном сертификате. Для лаборатории можно подтвердить исключение; для постоянного использования настройте доверенный сертификат.
+
+По умолчанию одна реплика Rancher для экономии памяти — это не HA Rancher. На master и workers выделено по 4 ГБ RAM. При включённом Rancher меню не разрешает уменьшить RAM ниже 4 ГБ. У уже созданных VM примените новые ресурсы последовательно: `vagrant reload k3s-master1 --no-provision`, `vagrant reload k3s-worker1 --no-provision`, затем `vagrant reload k3s-worker2 --no-provision` и `./cluster.sh up --verify`. Для HA Rancher увеличьте `rancher_replicas` и обеспечьте достаточно ресурсов и независимых узлов.
+
+`rancher_enabled: false` пропускает установку и проверки; уже установленный Rancher этим флагом не удаляется. При смене версии k3s учитывайте совместимость: текущий Rancher рассчитан на 1.34–1.36. Новая лаборатория после `destroy` получает новый пароль и сертификат.
+
+## Ссылки на Traefik и Rancher
+
+- [Rancher в этом кластере](https://rancher.192.168.58.11.sslip.io)
+- [Документация Rancher](https://ranchermanager.docs.rancher.com/)
+- [Установка Rancher через Helm](https://ranchermanager.docs.rancher.com/getting-started/installation-and-upgrade/install-upgrade-on-a-kubernetes-cluster/)
+- [Матрица совместимости Rancher 2.15.1](https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/rancher-v2-15-1/)
+- [Документация Traefik](https://doc.traefik.io/traefik/)
+- [Traefik в k3s](https://docs.k3s.io/networking/networking-services#traefik-ingress-controller)
+
+Traefik обслуживает Ingress на портах 80/443, в том числе Rancher. Его административный dashboard наружу не публикуется; произвольный URL worker без подходящего Ingress может вернуть 404.
+
+Проверено обновлённое развёртывание: миграция действующего master с SQLite на etcd, Rancher `2.15.1` Ready, сертификат для настроенного hostname, HTTPS `/ping`, DNS и межузловая сеть. Полный повторный `up --verify` завершился за 57 секунд с готовыми VM и кэшем. Добавление master проверено тестами меню и рендерингом конфигурации; присоединение дополнительной VM в текущем окружении не выполнялось — оставлены 1 master и 2 workers.

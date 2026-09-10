@@ -77,3 +77,21 @@ fixture do |root|
   assert(menu.calls.empty?)
 end
 puts 'PASS: failed drain, release lookup failure, failed destroy, cancellation, version recreation, backup, worker addition, duplicate IP, ordered removal, last worker protection'
+fixture do |root|
+  menu=TestMenu.new(root,['k3s-master2','192.168.58.12','1'])
+  menu.add_master
+  data=YAML.load_file(root+'/ansible/inventory.yml')
+  assert(data['all']['children']['server']['hosts'].key?('k3s-master2'))
+  assert(data['all']['children']['workers']['hosts'].length==2)
+  assert(menu.calls==[['./cluster.sh','up','--verify']])
+end
+fixture do |root|
+  before=File.read(root+'/ansible/inventory.yml')
+  menu=TestMenu.new(root,['k3s-worker1','192.168.58.12'])
+  begin menu.add_master; rescue RuntimeError; end
+  assert(menu.calls.empty? && File.read(root+'/ansible/inventory.yml')==before)
+  menu=TestMenu.new(root,['v1.37.0+k3s1','1'])
+  begin menu.version; rescue RuntimeError; end
+  assert(menu.calls.empty?)
+end
+puts 'PASS: master addition, cross-role uniqueness and Rancher version guard'

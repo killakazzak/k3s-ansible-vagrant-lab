@@ -4,8 +4,8 @@ vm_box: bento/ubuntu-24.04
 vm_box_version: '202510.26.0'
 vm_architecture: arm64
 vm_name_prefix: ''
-vm_cpus: {server: 2, workers: 1}
-vm_memory_mb: {server: 2048, workers: 1024}
+vm_cpus: {server: 2, workers: 2}
+vm_memory_mb: {server: 4096, workers: 4096}
 vm_boot_timeout: 300
 private_network_prefix: 24
 vagrant_parallels_version: '2.4.9'
@@ -52,3 +52,17 @@ smoke_client_resources:
   limits: {cpu: 100m, memory: 32Mi}
 
 smoke_ingress_host: k3s-smoke.test
+
+# Enables adding servers without recreating the cluster. SQLite is backed up before migration.
+k3s_embedded_etcd: true
+rancher_enabled: true
+rancher_version: '2.15.1'
+rancher_chart_repo: https://releases.rancher.com/server-charts/stable
+cert_manager_version: v1.21.1
+cert_manager_chart_repo: https://charts.jetstack.io
+rancher_hostname: "rancher.{{ hostvars[server_node].ansible_host }}.sslip.io"
+rancher_replicas: 1
+rancher_timeout: 900
+rancher_resources:
+  requests: {cpu: 500m, memory: 1536Mi}
+  limits: {cpu: '2', memory: 3Gi}

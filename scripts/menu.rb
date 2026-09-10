@@ -80,19 +80,29 @@ class ClusterMenu
   end
 
   def add_worker
+    add_node('workers', 'worker')
+  end
+
+  def add_master
+    puts 'Для отказоустойчивости etcd нужны минимум 3 master. Два master требуют доступности обоих.'
+    raise 'Включите k3s_embedded_etcd в настройках' unless settings['k3s_embedded_etcd']
+    add_node('server', 'master')
+  end
+
+  def add_node(group, role)
     data = inventory
-    name = ask('Имя нового worker, например k3s-worker3')
+    name = ask("Имя нового #{role}, например k3s-#{role}3")
     raise 'Имя: строчные латинские буквы, цифры, дефисы; до 63 символов' unless name.match?(/\A[a-z][a-z0-9-]{0,61}[a-z0-9]\z/)
     all = data['all']['children'].values.flat_map { |g| g['hosts'].to_a }
     raise 'Имя или vagrant_id уже заняты' if all.any? { |n, h| n == name || h['vagrant_id'] == name }
-    ip_text = ask('IPv4 нового worker')
+    ip_text = ask("IPv4 нового #{role}")
     ip = IPAddr.new(ip_text)
     raise 'Нужен одиночный IPv4' unless ip.ipv4? && ip_text == ip.to_s
     network = IPAddr.new("#{all.first.last['ansible_host']}/#{settings['private_network_prefix']}")
     raise 'IP должен быть в подсети кластера, не адресом сети или broadcast' unless network.include?(ip) && ip != network.to_range.first && ip != network.to_range.last
     raise 'IP уже занят в inventory' if all.any? { |_, h| h['ansible_host'] == ip_text }
     return unless confirm("Добавить #{name} (#{ip_text}) и применить конфигурацию?")
-    hosts(data, 'workers')[name] = {'ansible_host' => ip_text, 'vagrant_id' => name}
+    hosts(data, group)[name] = {'ansible_host' => ip_text, 'vagrant_id' => name}
     write(@inventory, YAML.dump(data))
     run('./cluster.sh', 'up', '--verify')
   end
@@ -120,8 +130,9 @@ class ClusterMenu
     raise 'Неверный номер' unless selection.match?(/\A[1-9]\d*\z/) && selection.to_i <= nodes.length
     name, host = nodes[selection.to_i - 1]
     cpu = ask('CPU (1–32)')
-    ram = ask('RAM в MB (1024–65536)')
-    raise 'Неверные CPU/RAM' unless cpu.match?(/\A\d+\z/) && ram.match?(/\A\d+\z/) && (1..32).cover?(cpu.to_i) && (1024..65536).cover?(ram.to_i)
+    minimum_ram = settings['rancher_enabled'] ? 4096 : 1024
+    ram = ask("RAM в MB (#{minimum_ram}–65536)")
+    raise 'Неверные CPU/RAM' unless cpu.match?(/\A\d+\z/) && ram.match?(/\A\d+\z/) && (1..32).cover?(cpu.to_i) && (minimum_ram..65536).cover?(ram.to_i)
     return unless confirm("Сохранить #{name}: #{cpu} CPU, #{ram} MB? Если VM существует, она будет перезагружена; master временно остановит API.")
     host['vm_cpus'] = cpu.to_i
     host['vm_memory_mb'] = ram.to_i
@@ -135,6 +146,9 @@ class ClusterMenu
     value = ask('Точная версия k3s, например v1.36.4+k3s1 (0 — отмена)')
     return if value == '0'
     raise 'Формат: vX.Y.Z+k3sN' unless value.match?(/\Av\d+\.\d+\.\d+\+k3s\d+\z/)
+    if settings['rancher_enabled'] && !value.match?(/\Av1\.(34|35|36)\./)
+      raise 'Rancher 2.15.1 поддерживает k3s 1.34–1.36. Выберите совместимую версию или отключите rancher_enabled до пересоздания.'
+    end
     return puts('Эта версия уже указана в настройках.') if value == settings['k3s_version']
     # Validate the release before touching VMs or configuration.
     run('curl', '--fail', '--silent', '--show-error', '--location', '--head', '--connect-timeout', '10', '--max-time', '30', '--output', '/dev/null', "https://github.com/k3s-io/k3s/releases/download/#{value}/sha256sum-arm64.txt")
@@ -153,7 +167,7 @@ class ClusterMenu
   def start
     loop do
       show
-      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n0. Выход"
+      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n0. Выход"
       begin
         case ask('Выбери номер')
         when '1' then run('./cluster.sh', 'up', '--verify')
@@ -167,6 +181,7 @@ class ClusterMenu
         when '6' then remove_worker
         when '7' then resources
         when '8' then version
+        when '9' then add_master
         when '0' then break
         else puts 'Выбери номер из меню.'
         end

@@ -1,0 +1,116 @@
+---
+- name: Install Rancher with the bundled k3s Helm controller
+  hosts: "{{ groups['server'][0] }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install and check Rancher
+      when: rancher_enabled | bool
+      block:
+        - name: Validate Rancher prerequisites
+          ansible.builtin.assert:
+            that:
+              - "'traefik' not in disabled_components"
+              - "'servicelb' not in disabled_components"
+              - rancher_replicas | int >= 1
+              - k3s_version is match('^v1[.](34|35|36)[.]')
+            fail_msg: This Rancher profile requires Traefik, ServiceLB and k3s 1.34–1.36. Check the support matrix before changing versions.
+        - name: Install pinned cert-manager chart
+          ansible.builtin.command: k3s kubectl apply -f -
+          args:
+            stdin: |
+              apiVersion: helm.cattle.io/v1
+              kind: HelmChart
+              metadata:
+                name: cert-manager
+                namespace: kube-system
+              spec:
+                repo: {{ cert_manager_chart_repo }}
+                chart: cert-manager
+                version: {{ cert_manager_version }}
+                targetNamespace: cert-manager
+                createNamespace: true
+                valuesContent: |-
+                  crds:
+                    enabled: true
+          register: cert_chart
+          retries: 6
+          delay: 5
+          until: cert_chart.rc == 0
+          changed_when: "'unchanged' not in cert_chart.stdout"
+        - name: Wait for cert-manager deployments
+          ansible.builtin.command: k3s kubectl -n cert-manager get deployment {{ item }}
+          loop: [cert-manager, cert-manager-webhook, cert-manager-cainjector]
+          register: cert_created
+          retries: "{{ (rancher_timeout | int / 5) | int }}"
+          delay: 5
+          until: cert_created.rc == 0
+          changed_when: false
+        - name: Wait for cert-manager readiness
+          ansible.builtin.command: k3s kubectl -n cert-manager rollout status deployment/{{ item }} --timeout={{ rancher_timeout }}s
+          loop: [cert-manager, cert-manager-webhook, cert-manager-cainjector]
+          changed_when: false
+        - name: Install pinned Rancher with Traefik ingress and generated TLS
+          ansible.builtin.command: k3s kubectl apply -f -
+          args:
+            stdin: |
+              apiVersion: helm.cattle.io/v1
+              kind: HelmChart
+              metadata:
+                name: rancher
+                namespace: kube-system
+              spec:
+                repo: {{ rancher_chart_repo }}
+                chart: rancher
+                version: {{ rancher_version }}
+                targetNamespace: cattle-system
+                createNamespace: true
+                valuesContent: |-
+                  hostname: {{ rancher_hostname }}
+                  replicas: {{ rancher_replicas }}
+                  ingress:
+                    ingressClassName: traefik
+                    tls:
+                      source: rancher
+                  agentTLSMode: strict
+                  resources: {{ rancher_resources | to_json }}
+          register: rancher_chart
+          retries: 6
+          delay: 5
+          until: rancher_chart.rc == 0
+          changed_when: "'unchanged' not in rancher_chart.stdout"
+        - name: Wait for Rancher deployment
+          ansible.builtin.command: k3s kubectl -n cattle-system get deployment rancher
+          register: rancher_created
+          retries: "{{ (rancher_timeout | int / 5) | int }}"
+          delay: 5
+          until: rancher_created.rc == 0
+          changed_when: false
+        - name: Wait for Rancher readiness
+          ansible.builtin.command: k3s kubectl -n cattle-system rollout status deployment/rancher --timeout={{ rancher_timeout }}s
+          changed_when: false
+        - name: Wait for certificate for the configured hostname
+          ansible.builtin.command: k3s kubectl -n cattle-system get certificate tls-rancher-ingress -o json
+          register: rancher_certificate
+          retries: "{{ (rancher_timeout | int / 5) | int }}"
+          delay: 5
+          until:
+            - rancher_certificate.rc == 0
+            - rancher_hostname in (rancher_certificate.stdout | from_json).spec.dnsNames
+            - ((rancher_certificate.stdout | from_json).status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | selectattr('observedGeneration', 'equalto', (rancher_certificate.stdout | from_json).metadata.generation) | list | length) > 0
+          changed_when: false
+        - name: Verify Rancher HTTPS endpoint with the lab certificate
+          ansible.builtin.uri:
+            url: "https://{{ rancher_hostname }}/ping"
+            validate_certs: false
+            return_content: true
+          register: rancher_ping
+          retries: 30
+          delay: 5
+          until: rancher_ping.status | default(0) == 200 and rancher_ping.content | default('') == 'pong'
+        - name: Show Rancher URL and bootstrap password command
+          ansible.builtin.debug:
+            msg:
+              - "Rancher: https://{{ rancher_hostname }}"
+              - "Login: admin. Get the initial password locally: ./kubectl.sh -n cattle-system get secret bootstrap-secret -o go-template='{% raw %}{{.data.bootstrapPassword|base64decode}}{% endraw %}'"
+              - "The lab certificate is signed by Rancher's private CA; browsers will request trust confirmation."

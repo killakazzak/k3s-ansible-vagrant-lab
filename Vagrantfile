@@ -3,7 +3,7 @@ require "ipaddr"
 root = File.dirname(__FILE__)
 settings = YAML.load_file(File.join(root, "ansible/group_vars/all.yml"))
 groups = YAML.load_file(File.join(root, "ansible/inventory.yml")).fetch("all").fetch("children")
-raise "Exactly one server is supported" unless groups.fetch("server").fetch("hosts").size == 1
+raise "At least one server is required" if groups.fetch("server").fetch("hosts").empty?
 raise "At least one worker is required" if groups.fetch("workers").fetch("hosts").empty?
 nodes = groups.flat_map { |role, group| group.fetch("hosts").map { |name, host| [role, name, host] } }
 %w[vagrant_id ansible_host].each do |key|
@@ -16,6 +16,7 @@ network = IPAddr.new("#{nodes.first.last.fetch('ansible_host')}/#{settings.fetch
 raise "All nodes must share a subnet" unless nodes.all? { |_, _, host| network.include?(IPAddr.new(host.fetch('ansible_host'))) }
 Vagrant.configure("2") do |config|
   config.vm.box = settings.fetch("vm_box")
+  config.vm.box_check_update = false
   config.vm.box_version = settings.fetch("vm_box_version")
   config.vm.box_architecture = settings.fetch("vm_architecture")
   config.vm.synced_folder ".", "/vagrant", disabled: true

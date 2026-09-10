@@ -3,6 +3,12 @@ node-ip: {{ node_ip }}
 flannel-iface: {{ cluster_interface }}
 resolv-conf: /etc/rancher/k3s/resolv.conf
 {% if inventory_hostname in groups['server'] %}
+{% if inventory_hostname == server_node %}
+cluster-init: {{ k3s_embedded_etcd | bool | lower }}
+{% else %}
+server: {{ api_url }}
+token-file: /etc/rancher/k3s/server-token
+{% endif %}
 https-listen-port: {{ api_port }}
 advertise-address: {{ node_ip }}
 tls-san:

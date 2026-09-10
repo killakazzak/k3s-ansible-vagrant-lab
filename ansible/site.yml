@@ -1,7 +1,7 @@
 ---
 - import_playbook: assets.yml
 
-- name: Prepare all three nodes in parallel
+- name: Prepare cluster nodes
   hosts: all
   become: true
   any_errors_fatal: true
@@ -9,10 +9,16 @@
     - name: Check topology
       ansible.builtin.assert:
         that:
-          - groups['server'] | length == 1
+          - groups['server'] | length >= 1
+          - groups['server'] | length == 1 or k3s_embedded_etcd | bool
           - groups['workers'] | length >= 1
           - dns_servers | length > 0
       run_once: true
+    - name: Require enough control-plane memory for Rancher
+      ansible.builtin.assert:
+        that: ansible_facts.memtotal_mb | int >= 3500
+        fail_msg: Rancher requires this lab's master VM to have at least 4096 MB configured. Apply resources with vagrant reload before deployment.
+      when: rancher_enabled | bool and inventory_hostname in groups['server']
     - name: Check installed k3s version before changing anything
       ansible.builtin.command: /usr/local/bin/k3s --version
       register: installed_version
@@ -108,10 +114,58 @@
         dest: /usr/local/lib/k3s/install.sh
         mode: '0644'
 
-- name: Start single k3s server
+- name: Start initial k3s server
+  any_errors_fatal: true
   hosts: "{{ groups['server'][0] }}"
   become: true
   tasks:
+    - name: Inspect SQLite datastore
+      ansible.builtin.stat:
+        path: /var/lib/rancher/k3s/server/db/state.db
+      register: sqlite_db
+    - name: Inspect etcd datastore
+      ansible.builtin.stat:
+        path: /var/lib/rancher/k3s/server/db/etcd/member
+      register: etcd_db
+    - name: Back up SQLite and credentials before conversion to etcd
+      when: k3s_embedded_etcd | bool and sqlite_db.stat.exists and not etcd_db.stat.exists
+      block:
+        - name: Stop server for consistent backup
+          ansible.builtin.systemd_service:
+            name: k3s
+            state: stopped
+        - name: Archive original datastore and token privately
+          ansible.builtin.shell: umask 077; tar -czf /var/lib/rancher/k3s/pre-etcd-backup.tar.gz -C /var/lib/rancher/k3s/server db token
+          args:
+            creates: /var/lib/rancher/k3s/pre-etcd-backup.tar.gz
+        - name: Protect local migration backup directory
+          ansible.builtin.file:
+            path: "{{ playbook_dir }}/../.cache/migration/{{ inventory_hostname }}"
+            state: directory
+            mode: '0700'
+          delegate_to: localhost
+          vars:
+            ansible_become: false
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        - name: Save migration backup on Mac
+          ansible.builtin.fetch:
+            src: /var/lib/rancher/k3s/pre-etcd-backup.tar.gz
+            dest: "{{ playbook_dir }}/../.cache/migration/{{ inventory_hostname }}/pre-etcd-backup.tar.gz"
+            flat: true
+          no_log: true
+        - name: Protect local migration archive
+          ansible.builtin.file:
+            path: "{{ playbook_dir }}/../.cache/migration/{{ inventory_hostname }}/pre-etcd-backup.tar.gz"
+            mode: '0600'
+          delegate_to: localhost
+          vars:
+            ansible_become: false
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      always:
+        - name: Ensure original server is running after backup
+          ansible.builtin.systemd_service:
+            name: k3s
+            state: started
     - name: Render server configuration
       ansible.builtin.template:
         src: config.yaml.j2
@@ -147,6 +201,59 @@
         src: /var/lib/rancher/k3s/server/agent-token
       register: agent_token
       no_log: true
+
+    - name: Read secure server join token
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/token
+      register: server_join_token
+      no_log: true
+
+- name: Join additional masters sequentially
+  hosts: "{{ groups['server'][1:] }}"
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tasks:
+    - name: Store server join credential
+      ansible.builtin.copy:
+        content: "{{ hostvars[server_node].server_join_token.content | b64decode }}"
+        dest: /etc/rancher/k3s/server-token
+        mode: '0600'
+      no_log: true
+      register: join_credential
+    - name: Render additional master configuration
+      ansible.builtin.template:
+        src: config.yaml.j2
+        dest: /etc/rancher/k3s/config.yaml
+        mode: '0600'
+      register: join_config
+    - name: Inspect server service
+      ansible.builtin.stat:
+        path: /etc/systemd/system/k3s.service
+      register: join_service
+    - name: Install additional server service
+      ansible.builtin.command: sh /usr/local/lib/k3s/install.sh
+      environment:
+        INSTALL_K3S_SKIP_DOWNLOAD: 'true'
+        INSTALL_K3S_SKIP_START: 'true'
+        INSTALL_K3S_EXEC: server
+      when: k3s_binary.changed or not join_service.stat.exists
+    - name: Start additional server
+      ansible.builtin.systemd_service:
+        name: k3s
+        enabled: true
+        daemon_reload: true
+        state: "{{ 'restarted' if join_config.changed or join_credential.changed or k3s_binary.changed else 'started' }}"
+    - name: Wait for additional API
+      ansible.builtin.command: k3s kubectl get --raw=/readyz
+      register: joined_ready
+      retries: 90
+      delay: 2
+      until: joined_ready.rc == 0
+      changed_when: false
+    - name: Wait for additional master Ready
+      ansible.builtin.command: k3s kubectl wait --for=condition=Ready node/{{ inventory_hostname }} --timeout={{ node_ready_timeout }}s
+      changed_when: false
 
 - name: Join workers in parallel
   hosts: workers
@@ -203,6 +310,10 @@
     - name: Wait for all nodes Ready
       ansible.builtin.command: k3s kubectl wait --for=condition=Ready nodes --all --timeout={{ node_ready_timeout }}s
       changed_when: false
+    - name: Refresh system controller watches after SQLite migration
+      ansible.builtin.command: k3s kubectl -n kube-system rollout restart deployment/{{ item }}
+      loop: "{{ ['coredns', 'local-path-provisioner'] + (['traefik'] if 'traefik' not in disabled_components else []) }}"
+      when: k3s_embedded_etcd | bool and sqlite_db.stat.exists and not etcd_db.stat.exists
     - name: Wait for bundled CoreDNS
       ansible.builtin.command: k3s kubectl -n kube-system rollout status deployment/coredns --timeout={{ rollout_timeout }}s
       changed_when: false
@@ -239,3 +350,5 @@
       changed_when: false
     - ansible.builtin.debug:
         var: nodes.stdout_lines
+
+- import_playbook: rancher.yml
