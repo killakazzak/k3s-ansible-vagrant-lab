@@ -634,7 +634,7 @@ PGDATA — `/var/lib/postgresql/18/docker`. Старые шаблоны PostgreS
 
 При новом развёртывании из каталога автоматически создаются:
 
-- PostgreSQL → **pgAdmin** (`dpage/pgadmin4:9.8`), сервер базы уже добавлен.
+- PostgreSQL → **pgAdmin** (`dpage/pgadmin4:9.17`), сервер базы уже добавлен.
   Пароль подключения к базе возьмите в карточке приложения.
 - Redis → **Redis Insight** (`redis/redisinsight:2.70.0`), подключение преднастроено.
 - Kafka → **AKHQ** (`tchiotludo/akhq:0.25.1`), подключение преднастроено.

@@ -1,6 +1,6 @@
 """Companion management UIs for catalogue workloads."""
 import base64,hashlib,json,secrets
-IMAGES={'postgres':('dpage/pgadmin4:9.8',80,'pgAdmin'),'redis':('redis/redisinsight:2.70.0',5540,'Redis Insight'),'kafka':('tchiotludo/akhq:0.25.1',8080,'AKHQ')}
+IMAGES={'postgres':('dpage/pgadmin4:9.17',80,'pgAdmin'),'redis':('redis/redisinsight:2.70.0',5540,'Redis Insight'),'kafka':('tchiotludo/akhq:0.25.1',8080,'AKHQ')}
 def build(c,host,manager):
  kind=c['type']
  if kind not in IMAGES:return []
