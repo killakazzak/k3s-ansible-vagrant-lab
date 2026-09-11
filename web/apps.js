@@ -95,7 +95,14 @@ function deleteApp(app){
 }
 
 let pvcData=[];
-async function refreshPVCs(){const cluster=selectedCluster;try{const data=await api('pvcs');if(cluster!==selectedCluster)return;pvcData=data;const box=$('pvc-list');box.replaceChildren();for(const p of data){const row=renderPVC(p);box.append(row)}if(!data.length)box.append(element('p','В кластере пока нет PVC.'));}catch(e){if(cluster===selectedCluster)$('pvc-list').textContent='PVC недоступны: '+e.message}}
+const pvcNamespaces=new Map();
+function renderPVCList(){
+ const namespaces=[...new Set(pvcData.map(p=>p.namespace))].sort();const select=$('pvc-namespace');let chosen=pvcNamespaces.get(selectedCluster)||'';if(!namespaces.includes(chosen))chosen='';pvcNamespaces.set(selectedCluster,chosen);select.replaceChildren();
+ for(const ns of ['',...namespaces]){const option=element('option',(ns||'Все (All)')+' · '+pvcData.filter(p=>!ns||p.namespace===ns).length);option.value=ns;select.append(option)}select.value=chosen;
+ const data=pvcData.filter(p=>!chosen||p.namespace===chosen);const box=$('pvc-list');box.replaceChildren();for(const p of data)box.append(renderPVC(p));if(!data.length)box.append(element('p','В кластере пока нет PVC.'));
+}
+$('pvc-namespace').onchange=()=>{pvcNamespaces.set(selectedCluster,$('pvc-namespace').value);renderPVCList()};
+async function refreshPVCs(){const cluster=selectedCluster;try{const data=await api('pvcs');if(cluster!==selectedCluster)return;pvcData=data;renderPVCList();}catch(e){if(cluster===selectedCluster)$('pvc-list').textContent='PVC недоступны: '+e.message}}
 function addStorageFields(type){
  const mode=labField('storage_mode','Хранилище','none','text',[{value:'none',label:'Без PVC (Nginx / свой образ)'},{value:'new',label:'Создать новый PVC'},{value:'existing',label:'Подключить существующий PVC'}]);
  const claim=labField('pvc','Существующий PVC','','text',[]);const mount=labField('mount_path','Путь монтирования (Nginx / свой образ)','/data');const secret=labField('storage_secret','Secret с прежним паролем базы','','text',[]);secret.required=false;
