@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Loopback-only cluster console; standard library, no pip dependencies."""
 import argparse
+import base64
 import ipaddress
 import fcntl
 import hmac
@@ -78,6 +79,21 @@ def links():
             for key, label in [('rancher', 'RANCHER_URL'), ('traefik', 'TRAEFIK_URL')]}
 
 
+def credentials(service):
+    namespace, secret = {'rancher': ('cattle-system', 'bootstrap-secret'),
+                         'traefik': ('kube-system', 'traefik-dashboard-auth')}[service]
+    try:
+        data = json.loads(capture(['./kubectl.sh', '-n', namespace, 'get', 'secret', secret,
+                                   '-o', 'json', '--request-timeout=5s'], 8))['data']
+        password = base64.b64decode(data['bootstrapPassword' if service == 'rancher' else 'password'], validate=True).decode()
+        username = 'admin' if service == 'rancher' else base64.b64decode(data['username'], validate=True).decode()
+        if not password:
+            raise ValueError('empty password')
+        return {'username': username, 'password': password}
+    except Exception:
+        raise RuntimeError('Не удалось получить пароль. Проверьте доступность кластера и наличие Secret сервиса.') from None
+
+
 def execute(job, payload):
     try:
         p = subprocess.Popen(['ruby', 'scripts/web-action.rb'], cwd=ROOT, env=ENV, stdin=subprocess.PIPE,
@@ -140,6 +156,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed():
             return
         try:
+            if path in ('/api/credentials/rancher', '/api/credentials/traefik'):
+                return self.reply(200, credentials(path.rsplit('/', 1)[1]))
             if path == '/api/status':
                 return self.reply(200, status())
             if path == '/api/links':

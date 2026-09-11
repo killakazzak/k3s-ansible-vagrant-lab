@@ -43,7 +43,30 @@ function openAction(action,nodeName){if(!state)return;currentAction=action;$('fi
  if(action==='version')field('version','Точная версия (например v1.36.4+k3s1)',state.version);
  if(['destroy','version','remove_master','remove_worker'].includes(action))field('confirmation','Для подтверждения введите УДАЛИТЬ');
  $('modal').showModal();}
-document.addEventListener('click',e=>{const a=e.target.closest('[data-action]');if(a)openAction(a.dataset.action,a.dataset.node);const c=e.target.closest('[data-credentials]');if(c){currentAction=null;$('fields').replaceChildren();$('form-error').hidden=true;$('modal-title').textContent='Вход в '+(c.dataset.credentials==='rancher'?'Rancher':'Traefik');$('modal-description').textContent='Логин по умолчанию: admin. Выполните команду в каталоге проекта, чтобы получить пароль. Для HTTPS потребуется принять сертификат лаборатории.';const cmd=c.dataset.credentials==='rancher'?"./kubectl.sh -n cattle-system get secret bootstrap-secret -o jsonpath='{.data.bootstrapPassword}' | base64 -d; echo":"./kubectl.sh -n kube-system get secret traefik-dashboard-auth -o jsonpath='{.data.password}' | base64 -d; echo";$('fields').append(element('pre',cmd,'credential'));$('submit').hidden=true;$('modal').showModal()}});
+let credentialRequest = 0;
+async function showPassword(service) {
+  const request = ++credentialRequest;
+  currentAction = null;
+  $('fields').replaceChildren(); $('form-error').hidden = true;
+  $('modal-title').textContent = 'Пароль · ' + (service === 'rancher' ? 'Rancher' : 'Traefik');
+  $('modal-description').textContent = service === 'rancher' ? 'Первоначальный пароль Rancher. Если вы уже сменили его в Rancher, используйте новый пароль.' : 'Текущие учётные данные Traefik.';
+  $('fields').append(element('p', 'Получаем пароль…'));
+  $('submit').hidden = true; $('modal').showModal();
+  try {
+    const login = await api('credentials/' + service);
+    if (request !== credentialRequest || !$('modal').open) return;
+    $('fields').replaceChildren();
+    $('fields').append(element('label', 'Логин'), element('pre', login.username, 'credential'), element('label', 'Пароль'), element('pre', login.password, 'credential'));
+  } catch (e) {
+    if (request !== credentialRequest || !$('modal').open) return;
+    $('fields').replaceChildren(); $('form-error').textContent = e.message; $('form-error').hidden = false;
+  }
+}
+$('modal').addEventListener('close', () => { credentialRequest++; $('fields').replaceChildren(); });
+document.addEventListener('click', e => {
+  const a = e.target.closest('[data-action]'); if (a) openAction(a.dataset.action, a.dataset.node);
+  const c = e.target.closest('[data-credentials]'); if (c) showPassword(c.dataset.credentials);
+});
 $('action-form').addEventListener('submit',async e=>{e.preventDefault();if(!currentAction)return;const params=Object.fromEntries(new FormData(e.target));$('submit').disabled=true;try{await api('action',{action:currentAction,params,confirmed:true,confirmation:params.confirmation});$('modal').close();setBusy(true);$('operations').scrollIntoView({behavior:'smooth'});await poll()}catch(e){$('form-error').textContent=e.message;$('form-error').hidden=false}finally{$('submit').disabled=false}});
 for(const id of ['cancel','close'])$(id).onclick=()=>$('modal').close();
 $('refresh').onclick=async()=>{await refresh();await loadLinks()};

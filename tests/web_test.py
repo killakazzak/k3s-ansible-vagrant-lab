@@ -27,6 +27,20 @@ class ConsoleTests(unittest.TestCase):
         try:
             with urlopen(req) as response: return response.status, response.read()
         except HTTPError as e: return e.code, e.read()
+    def test_password_endpoint_requires_auth(self):
+        with patch.object(app, 'credentials') as fetch:
+            self.assertEqual(self.request('/api/credentials/traefik', token=False)[0], 401)
+            fetch.assert_not_called()
+    def test_password_decoding(self):
+        import base64
+        encoded = lambda text: base64.b64encode(text.encode()).decode()
+        with patch.object(app, 'capture', return_value=json.dumps({'data': {'username': encoded('admin'), 'password': encoded('test-only')}})):
+            self.assertEqual(app.credentials('traefik'), {'username': 'admin', 'password': 'test-only'})
+    def test_password_errors_do_not_leak_output(self):
+        with patch.object(app, 'capture', side_effect=RuntimeError('secret-value')):
+            code, body = self.request('/api/credentials/rancher')
+            self.assertEqual(code, 500)
+            self.assertNotIn(b'secret-value', body)
     def test_requires_token(self):
         self.assertEqual(self.request(token=False)[0], 401)
     def test_rejects_foreign_origin_and_host(self):
