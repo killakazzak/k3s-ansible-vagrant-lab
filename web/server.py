@@ -208,7 +208,7 @@ def new_cluster(name, cidr, params=None):
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.Lock()
 JOB = None
-LAB_ACTIONS = {'app_stop','app_restart','app_delete','app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
+LAB_ACTIONS = {'app_start','app_stop','app_restart','app_delete','app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
 ACTIONS = LAB_ACTIONS | {'create', 'destroy', 'verify', 'add_master', 'add_worker', 'remove_master', 'remove_worker', 'resources', 'version'}
 DESTRUCTIVE = {'app_delete','destroy', 'remove_master', 'remove_worker', 'version'}
 
@@ -293,6 +293,9 @@ def node_utilization():
         if p.returncode:raise RuntimeError('Метрики узла недоступны')
         return json.loads(p.stdout)
     nodes=run(['get','nodes','-o','json','--request-timeout=5s'])['items']
+    try:
+        budgets=lab_apps.allocation(nodes,run(['get','pods','-A','-o','json','--request-timeout=5s'])['items'])
+    except Exception:budgets={}
     def quantity(value):
         match=re.fullmatch(r'([0-9.]+)(Ki|Mi|Gi|Ti|m)?',str(value))
         if not match:return None
@@ -304,8 +307,8 @@ def node_utilization():
         try:
             data=run(['get','--raw','/api/v1/nodes/'+name+'/proxy/stats/summary','--request-timeout=5s'])['node']
             capacity=node['status']['capacity'];cpu=data.get('cpu',{});memory=data.get('memory',{});disk=data.get('fs',{})
-            return dict(name=name,cpu=metric(cpu['usageNanoCores']/1e9 if 'usageNanoCores' in cpu else None,quantity(capacity.get('cpu')),cpu.get('time')),memory=metric(memory.get('workingSetBytes'),quantity(capacity.get('memory')),memory.get('time')),disk=metric(disk.get('usedBytes'),disk.get('capacityBytes'),disk.get('time')))
-        except (RuntimeError,ValueError,KeyError,subprocess.TimeoutExpired):return dict(name=name,error='Нет свежих метрик kubelet')
+            return dict(name=name,allocation=budgets.get(name),cpu=metric(cpu['usageNanoCores']/1e9 if 'usageNanoCores' in cpu else None,quantity(capacity.get('cpu')),cpu.get('time')),memory=metric(memory.get('workingSetBytes'),quantity(capacity.get('memory')),memory.get('time')),disk=metric(disk.get('usedBytes'),disk.get('capacityBytes'),disk.get('time')))
+        except (RuntimeError,ValueError,KeyError,subprocess.TimeoutExpired):return dict(name=name,allocation=budgets.get(name),error='Нет свежих метрик kubelet')
     with ThreadPoolExecutor(max_workers=4) as pool:return list(pool.map(one,nodes))
 
 def links():

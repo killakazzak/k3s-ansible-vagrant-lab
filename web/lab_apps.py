@@ -100,6 +100,41 @@ def storage_location(pv,nodes):
     candidates=[dict(name=n['metadata']['name'],ip=next((a['address'] for a in n.get('status',{}).get('addresses',[]) if a['type']=='InternalIP'),'')) for n in nodes if any(matches(n,t) for t in terms)]
     return dict(kind='Локальный диск VM',nodes=candidates,path=local.get('path',''),note='Путь внутри VM, а не на Mac.' if len(candidates)==1 else 'PV не определяет единственный узел хранения; показаны ограничения размещения.')
 
+def resource_quantity(value):
+    from decimal import Decimal
+    match=re.fullmatch(r'([0-9]+(?:\.[0-9]+)?)([a-zA-Z]*)',str(value))
+    if not match:raise ValueError('Неизвестная величина ресурсов: '+str(value))
+    factors={'':1,'n':1e-9,'u':1e-6,'m':.001,'k':1000,'K':1000,'M':1e6,'G':1e9,'T':1e12,'Ki':1024,'Mi':1024**2,'Gi':1024**3,'Ti':1024**4,'Pi':1024**5,'Ei':1024**6}
+    if match[2] not in factors:raise ValueError('Неизвестная единица ресурсов')
+    return float(Decimal(match[1])*Decimal(str(factors[match[2]])))
+
+def pod_budget(spec,field='requests'):
+    def values(c):return {k:resource_quantity(c.get('resources',{}).get(field,{}).get(k,0)) for k in ('cpu','memory')}
+    total={k:sum(values(c)[k] for c in spec.get('containers',[])) for k in ('cpu','memory')}
+    sidecars=dict(cpu=0,memory=0);peak=dict(cpu=0,memory=0)
+    for c in spec.get('initContainers',[]):
+        v=values(c)
+        if c.get('restartPolicy')=='Always':
+            for k in total:sidecars[k]+=v[k]
+            v=dict(cpu=0,memory=0)
+        for k in total:peak[k]=max(peak[k],sidecars[k]+v[k])
+    for k in total:total[k]=max(total[k]+sidecars[k],peak[k])+resource_quantity(spec.get('overhead',{}).get(k,0))
+    return total
+
+def allocation(nodes,pods):
+    result={n['metadata']['name']:dict(allocatable={k:resource_quantity(n['status']['allocatable'].get(k,0)) for k in ('cpu','memory')},requests=dict(cpu=0,memory=0),limits=dict(cpu=0,memory=0),unlimited=dict(cpu=0,memory=0)) for n in nodes}
+    for p in pods:
+        if p.get('status',{}).get('phase') in ('Succeeded','Failed'):continue
+        node=result.get(p.get('spec',{}).get('nodeName'))
+        if not node:continue
+        for field in ('requests','limits'):
+            v=pod_budget(p['spec'],field)
+            for k in v:node[field][k]+=v[k]
+        for c in p['spec'].get('containers',[]):
+            for k in ('cpu','memory'):
+                if not c.get('resources',{}).get('limits',{}).get(k):node['unlimited'][k]+=1
+    return result
+
 class Apps:
     def __init__(self,root,env=None):self.root=Path(root);self.env=env or os.environ.copy()
     def kubectl(self,args,body=None,timeout=30):
@@ -411,6 +446,22 @@ class Apps:
             if details:
                 raise ValueError('Приложение '+ns+'/'+name+' пока не готово. '+' '.join(dict.fromkeys(details))+' Ресурсы сохранены; после устранения причины выполните «Проверить».') from error
             raise
+
+    def check_capacity(self,plans):
+        nodes=self.get('nodes')['items'];pods=self.get('pods')['items'];budget=allocation(nodes,pods)
+        candidates=[n for n in nodes if not n.get('spec',{}).get('unschedulable') and any(c.get('type')=='Ready' and c.get('status')=='True' for c in n.get('status',{}).get('conditions',[])) and not any(t.get('effect') in ('NoSchedule','NoExecute') for t in n.get('spec',{}).get('taints',[]))]
+        demands=[]
+        for c,kind,objects,host in plans:
+            for obj in objects:
+                if obj['kind'] not in ('Deployment','StatefulSet'):continue
+                for _ in range(obj['spec'].get('replicas',1)):
+                    demands.append((obj['metadata']['name'],pod_budget(obj['spec']['template']['spec'])))
+        for name,need in sorted(demands,key=lambda v:v[1]['memory'],reverse=True):
+            node=next((n for n in candidates if all(budget[n['metadata']['name']]['allocatable'][k]-budget[n['metadata']['name']]['requests'][k]>=need[k] for k in need)),None)
+            if node is None:
+                raise ValueError('Проверка ресурсов: для '+name+' требуется '+str(round(need['cpu']*1000))+'m CPU и '+str(round(need['memory']/1024**2))+' MiB RAM. По requests нет места на доступных узлах. Учтены приложения набора и веб-панели. Увеличьте ресурсы worker или добавьте worker. Развёртывание не начато.')
+            for k in need:budget[node['metadata']['name']]['requests'][k]+=need[k]
+        print('Проверка CPU/RAM пройдена (оценка по requests; PVC, affinity и ResourceQuota могут дополнительно ограничить размещение).',flush=True)
 
     def deploy(self,config,prepared=None):
         c,kind,objects,host=prepared or self.preflight(config);ns=c['namespace'];name=c['name']

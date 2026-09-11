@@ -30,8 +30,9 @@ def main():
         prepared=[apps.preflight(c) for c in validated]
         hosts=[p[3] for p in prepared if p[3]]
         if len(set(hosts))!=len(hosts):raise ValueError('Повторяются hostname приложений')
+        apps.check_capacity(prepared)
         for c,plan in zip(validated,prepared):apps.deploy(c,plan)
-    elif action in ('app_stop','app_restart'):
+    elif action in ('app_start','app_stop','app_restart'):
         from lab_apps import dns, MANAGER
         targets=params.get('apps',[])
         if not isinstance(targets,list) or not 1<=len(targets)<=50:raise ValueError('Выберите от 1 до 50 приложений')
@@ -57,6 +58,8 @@ def main():
                 if replicas<1:replicas=1
                 print(apps.kubectl(['scale',target,'-n',ns,'--replicas='+str(replicas)]),flush=True)
                 print(apps.wait_rollout(kind,name,ns,300),flush=True)
+            elif action=='app_start':
+                print('Приложение уже запущено; реплики не меняются.',flush=True)
             else:
                 print(apps.kubectl(['rollout','restart',target,'-n',ns]),flush=True)
                 print(apps.wait_rollout(kind,name,ns,300),flush=True)

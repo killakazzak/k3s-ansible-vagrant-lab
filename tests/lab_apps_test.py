@@ -70,6 +70,18 @@ class LabTests(unittest.TestCase):
     with self.assertRaises(ValueError):app.resource_yaml(data)
    cmd.assert_not_called()
 
+ def test_capacity_includes_panel_and_ignores_completed_pods(self):
+  app=lab.Apps('/tmp');plan=app.plan({'type':'postgres','name':'db','namespace':'dev','memory':256})
+  node={'metadata':{'name':'worker'},'status':{'allocatable':{'cpu':'2','memory':'400Mi'},'conditions':[{'type':'Ready','status':'True'}]}}
+  with patch.object(app,'get',side_effect=[{'items':[node]},{'items':[]}]),patch.object(app,'apply') as apply:
+   with self.assertRaisesRegex(ValueError,'Проверка ресурсов'):app.check_capacity([plan])
+   apply.assert_not_called()
+  pod={'spec':{'nodeName':'worker','containers':[{'resources':{'requests':{'memory':'300Mi'}}}]},'status':{'phase':'Succeeded'}}
+  self.assertEqual(lab.allocation([node],[pod])['worker']['requests']['memory'],0)
+ def test_pod_budget_includes_init_sidecars(self):
+  spec={'containers':[{'resources':{'requests':{'memory':'100Mi'}}}], 'initContainers':[{'restartPolicy':'Always','resources':{'requests':{'memory':'50Mi'}}},{'resources':{'requests':{'memory':'200Mi'}}}]}
+  self.assertEqual(lab.pod_budget(spec)['memory'],250*1024**2)
+
  def test_manifest_and_validation(self):
   app=lab.Apps('/tmp')
   c,k,objects,h=app.plan(dict(type='postgres',name='db',namespace='dev'))
