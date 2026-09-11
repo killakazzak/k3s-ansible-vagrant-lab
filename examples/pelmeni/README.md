@@ -42,3 +42,20 @@ PVC не требуется: статический контент хранит�
 ```bash
 .clusters/k8s-cluster1/kubectl.sh -n pelmeni delete deployment pelmeni --ignore-not-found
 ```
+
+## Второй кластер
+
+Адрес: http://pelmeni.192.168.69.11.sslip.io/
+Конфигурация `examples/pelmeni-cluster2` использует те же HTML, фото и StatefulSet,
+переопределяя только hostname Ingress. Первый кластер не меняется.
+
+```bash
+.clusters/k8s-cluster2/kubectl.sh apply --server-side -k examples/pelmeni-cluster2
+.clusters/k8s-cluster2/kubectl.sh -n pelmeni rollout status statefulset/pelmeni
+```
+
+Для удаления сайта только со второго кластера:
+
+```bash
+.clusters/k8s-cluster2/kubectl.sh delete namespace pelmeni
+```
