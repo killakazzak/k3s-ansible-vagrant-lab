@@ -183,13 +183,33 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=int, default=8765)
     args = parser.parse_args()
     (ROOT / '.cache').mkdir(exist_ok=True)
-    instance_lock = (ROOT / '.cache/web.lock').open('w')
+    lock_path = ROOT / '.cache/web.lock'
+    instance_lock = os.fdopen(os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600), 'r+')
+    os.chmod(lock_path, 0o600)
     try:
         fcntl.flock(instance_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        raise SystemExit('Веб-консоль этого проекта уже запущена.')
+        for attempt in range(20):
+            instance_lock.seek(0)
+            try:
+                existing = json.load(instance_lock)
+                url = existing['url']
+                break
+            except (ValueError, KeyError):
+                time.sleep(0.1)
+        else:
+            print('Веб-консоль уже работает. Откройте ссылку из терминала её запуска.')
+            raise SystemExit(0)
+        print('Веб-консоль уже работает. Откройте существующий интерфейс:')
+        print(url, flush=True)
+        raise SystemExit(0)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
-    print(f'\nK3s Lab → http://127.0.0.1:{server.server_port}/#token={TOKEN}', flush=True)
+    url = f'http://127.0.0.1:{server.server_port}/#token={TOKEN}'
+    instance_lock.seek(0)
+    instance_lock.truncate()
+    json.dump({'url': url}, instance_lock)
+    instance_lock.flush()
+    print(f'\nK3s Lab → {url}', flush=True)
     print('Оставьте терминал открытым. Ctrl+C останавливает веб-сервер; дождитесь окончания операций перед выходом.', flush=True)
     try:
         server.serve_forever()

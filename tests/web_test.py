@@ -49,4 +49,24 @@ class ConsoleTests(unittest.TestCase):
     def test_static_no_path_traversal(self):
         self.assertEqual(self.request('/../ansible/inventory.yml')[0],404)
 
+class RepeatedLaunchTests(unittest.TestCase):
+    def test_reuses_existing_server_and_keeps_private_url(self):
+        import tempfile, shutil, subprocess, sys, os
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'web').mkdir()
+            shutil.copy(Path(app.__file__), root / 'web/server.py')
+            command = [sys.executable, str(root / 'web/server.py'), '--port', '0']
+            first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual(first.stdout.readline().strip(), '')
+                initial = first.stdout.readline().strip().split(' → ')[1]
+                again = subprocess.run(command, capture_output=True, text=True, timeout=5)
+                self.assertEqual(again.returncode, 0)
+                self.assertIn(initial, again.stdout)
+                self.assertEqual(os.stat(root / '.cache/web.lock').st_mode & 0o777, 0o600)
+            finally:
+                first.terminate()
+                first.communicate(timeout=5)
+
 if __name__ == '__main__': unittest.main()
