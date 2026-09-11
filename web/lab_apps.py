@@ -47,7 +47,9 @@ def validate(config):
     mount=config.get('mount_path','/data')
     if not isinstance(mount,str) or not mount.startswith('/') or mount=='/' or '..' in mount.split('/'):raise ValueError('Укажите абсолютный путь монтирования')
     credential=dns(config.get('storage_secret',''),'Secret с паролем') if mode=='existing' and kind in ('postgres','rabbitmq') else ''
-    return dict(storage_mode=mode,pvc=claim,mount_path=mount,storage_secret=credential,type=kind,name=dns(config.get('name',''),'имя приложения'),namespace=namespace(config.get('namespace','dev'),True),image=image,
+    shovel=config.get('shovel',False)
+    if shovel not in (True,False,'true','false'):raise ValueError('Некорректная настройка Shovel')
+    return dict(shovel=shovel in (True,'true'),storage_mode=mode,pvc=claim,mount_path=mount,storage_secret=credential,type=kind,name=dns(config.get('name',''),'имя приложения'),namespace=namespace(config.get('namespace','dev'),True),image=image,
                 replicas=number(config.get('replicas',1),1,1 if kind in STATEFUL else 10,'реплики'),
                 cpu=number(config.get('cpu',100),25,8000,'CPU, millicores'),memory=number(config.get('memory',1024 if kind=='kafka' else 512 if kind=='rabbitmq' else 256),768 if kind=='kafka' else 256 if kind=='rabbitmq' else 32,16384,'RAM, MiB'),
                 storage=number(config.get('storage',2),1,100,'диск, GiB'),port=number(config.get('port',CATALOG[kind]['port']),1,65535,'порт'),host=host)
@@ -99,6 +101,10 @@ def storage_location(pv,nodes):
         return True
     candidates=[dict(name=n['metadata']['name'],ip=next((a['address'] for a in n.get('status',{}).get('addresses',[]) if a['type']=='InternalIP'),'')) for n in nodes if any(matches(n,t) for t in terms)]
     return dict(kind='Локальный диск VM',nodes=candidates,path=local.get('path',''),note='Путь внутри VM, а не на Mac.' if len(candidates)==1 else 'PV не определяет единственный узел хранения; показаны ограничения размещения.')
+
+def rabbit_startup(enabled):
+    operation='enable' if enabled else 'disable'
+    return ['sh','-ec','rabbitmq-plugins --offline '+operation+' rabbitmq_shovel_management rabbitmq_shovel; exec docker-entrypoint.sh rabbitmq-server']
 
 def resource_quantity(value):
     from decimal import Decimal
@@ -168,7 +174,7 @@ class Apps:
             containers=obj['spec']['template']['spec']['containers']
             if len(containers)!=1:raise ValueError('Наборы с несколькими контейнерами пока не поддерживаются')
             c=containers[0];ctype=labels.get('lab.k3s/type','custom');requests=c.get('resources',{}).get('requests',{})
-            config=dict(type=ctype,name=name,namespace=ns,image=c['image'],replicas=obj['spec'].get('replicas',1),cpu=amount(requests.get('cpu','100m'),.001),memory=amount(requests.get('memory','256Mi'),1024**2),port=c.get('ports',[{'containerPort':8080}])[0]['containerPort'],host='',storage_mode='none')
+            config=dict(shovel=obj['metadata'].get('annotations',{}).get('lab.k3s/shovel')=='true',type=ctype,name=name,namespace=ns,image=c['image'],replicas=obj['spec'].get('replicas',1),cpu=amount(requests.get('cpu','100m'),.001),memory=amount(requests.get('memory','256Mi'),1024**2),port=c.get('ports',[{'containerPort':8080}])[0]['containerPort'],host='',storage_mode='none')
             claims=obj['spec'].get('volumeClaimTemplates',[])
             if claims:
                 size=claims[0]['spec']['resources']['requests']['storage']
@@ -186,6 +192,25 @@ class Apps:
             if any(p.get('backend',{}).get('service',{}).get('name')==name for i in routes for rule in i.get('spec',{}).get('rules',[]) for p in rule.get('http',{}).get('paths',[])):config['host']=name
             configs.append(validate(config))
         return save_template(dict(name=data.get('name'),apps=configs))
+
+    def rabbit_plugins(self,data):
+        ns=namespace(data.get('namespace'),True);name=dns(data.get('name'));enabled=data.get('enabled')
+        if not isinstance(enabled,bool):raise ValueError('Укажите состояние Shovel')
+        obj=self.get('StatefulSet',ns,name)
+        labels=obj['metadata'].get('labels',{})
+        if labels.get('app.kubernetes.io/managed-by')!=MANAGER or labels.get('lab.k3s/type')!='rabbitmq':raise ValueError('Выберите RabbitMQ из каталога')
+        containers=obj['spec']['template']['spec']['containers']
+        if len(containers)!=1:raise ValueError('Поддерживается RabbitMQ с одним контейнером')
+        patch={'metadata':{'annotations':{'lab.k3s/shovel':str(enabled).lower()}},'spec':{'template':{'spec':{'containers':[{'name':containers[0]['name'],'command':rabbit_startup(enabled),'args':None}]}}}}
+        self.kubectl(['patch','statefulset/'+name,'-n',ns,'--type=strategic','-p',json.dumps(patch)])
+        if obj['spec'].get('replicas',1)==0:
+            print('Настройка сохранена. Shovel будет '+('включён' if enabled else 'выключен')+' при запуске RabbitMQ.',flush=True);return
+        print(self.wait_rollout('StatefulSet',name,ns,300),flush=True)
+        plugins=self.kubectl(['exec','-n',ns,'statefulset/'+name,'--','rabbitmq-plugins','list','-e','-m'])
+        active=set(plugins.split())
+        if enabled and not {'rabbitmq_shovel','rabbitmq_shovel_management'}<=active:raise ValueError('Shovel не подтвердил включение')
+        if not enabled and {'rabbitmq_shovel','rabbitmq_shovel_management'}&active:raise ValueError('Shovel не подтвердил отключение')
+        print('Shovel '+('включён. В RabbitMQ: Admin → Shovel Management.' if enabled else 'выключен.')+' Настройка сохранена в StatefulSet.',flush=True)
 
     def resource_yaml(self,data):
         resources={'pods':'pods','pvcs':'persistentvolumeclaims','secrets':'secrets','deployments':'deployments.apps','statefulsets':'statefulsets.apps','daemonsets':'daemonsets.apps','jobs':'jobs.batch','cronjobs':'cronjobs.batch','services':'services','ingresses':'ingresses.networking.k8s.io','configmaps':'configmaps'}
@@ -228,7 +253,7 @@ class Apps:
             if ns in PROTECTED or ns.startswith(('kube-','cattle-')):continue
             if m.get('labels',{}).get('lab.k3s/panel-for'):continue
             containers=obj['spec']['template']['spec']['containers']
-            out.append(dict(name=m['name'],namespace=ns,kind=obj['kind'],replicas=obj['spec'].get('replicas',1),ready=obj.get('status',{}).get('readyReplicas',0),containers=[dict(name=c['name'],image=c['image']) for c in containers],managed=m.get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER,type=m.get('labels',{}).get('lab.k3s/type','custom'),check=self.check_result(obj)))
+            out.append(dict(name=m['name'],namespace=ns,kind=obj['kind'],replicas=obj['spec'].get('replicas',1),ready=obj.get('status',{}).get('readyReplicas',0),containers=[dict(name=c['name'],image=c['image']) for c in containers],managed=m.get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER,type=m.get('labels',{}).get('lab.k3s/type','custom'),shovel=m.get('annotations',{}).get('lab.k3s/shovel')=='true',check=self.check_result(obj)))
         for app in out:
             app['urls']=[{'title':i['metadata']['name'],'url':'http://'+r['host']+'/'} for i in routes if i['metadata'].get('namespace')==app['namespace'] for r in i.get('spec',{}).get('rules',[]) if r.get('host') and any(p.get('backend',{}).get('service',{}).get('name') in (app['name'],app['name']+'-ui') for p in r.get('http',{}).get('paths',[]))]
         return out
@@ -388,6 +413,8 @@ class Apps:
             values={'KAFKA_NODE_ID':'1','KAFKA_PROCESS_ROLES':'broker,controller','KAFKA_LISTENERS':'PLAINTEXT://:9092,CONTROLLER://:9093','KAFKA_ADVERTISED_LISTENERS':'PLAINTEXT://'+name+'.'+ns+'.svc.cluster.local:9092','KAFKA_LISTENER_SECURITY_PROTOCOL_MAP':'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT','KAFKA_CONTROLLER_LISTENER_NAMES':'CONTROLLER','KAFKA_CONTROLLER_QUORUM_VOTERS':'1@localhost:9093','KAFKA_INTER_BROKER_LISTENER_NAME':'PLAINTEXT','KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR':'1','KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR':'1','KAFKA_TRANSACTION_STATE_LOG_MIN_ISR':'1','KAFKA_LOG_DIRS':'/var/lib/kafka/data/logs','KAFKA_HEAP_OPTS':'-Xms256m -Xmx512m','CLUSTER_ID':'MkU3OEVBNTcwNTJENDM2Qk'}
             container['env']=[dict(name=k,value=v) for k,v in values.items()]
         if c['type']=='rabbitmq':
+            container['command']=rabbit_startup(c['shovel'])
+            workload['metadata'].setdefault('annotations',{})['lab.k3s/shovel']=str(c['shovel']).lower()
             container['env']=[dict(name='RABBITMQ_DEFAULT_USER',value='app'),dict(name='RABBITMQ_DEFAULT_PASS',valueFrom={'secretKeyRef':{'name':c['storage_secret'] or name+'-auth','key':'password'}})]
             container['ports'].append(dict(name='management',containerPort=15672))
         objects.append(workload)

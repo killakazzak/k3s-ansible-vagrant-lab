@@ -82,6 +82,19 @@ class LabTests(unittest.TestCase):
   spec={'containers':[{'resources':{'requests':{'memory':'100Mi'}}}], 'initContainers':[{'restartPolicy':'Always','resources':{'requests':{'memory':'50Mi'}}},{'resources':{'requests':{'memory':'200Mi'}}}]}
   self.assertEqual(lab.pod_budget(spec)['memory'],250*1024**2)
 
+ def test_shovel_is_persisted_in_pod_startup(self):
+  app=lab.Apps('/tmp')
+  for enabled in (True,False):
+   c,k,objects,h=app.plan(dict(type='rabbitmq',name='mq',namespace='dev',shovel=enabled))
+   obj=next(o for o in objects if o['kind']=='StatefulSet')
+   self.assertEqual(obj['metadata']['annotations']['lab.k3s/shovel'],str(enabled).lower())
+   self.assertIn('--offline '+('enable' if enabled else 'disable'),obj['spec']['template']['spec']['containers'][0]['command'][2])
+ def test_shovel_update_keeps_stopped_broker_stopped(self):
+  app=lab.Apps('/tmp');obj={'metadata':{'labels':{'app.kubernetes.io/managed-by':lab.MANAGER,'lab.k3s/type':'rabbitmq'}},'spec':{'replicas':0,'template':{'spec':{'containers':[{'name':'rabbitmq'}]}}}}
+  with patch.object(app,'get',return_value=obj),patch.object(app,'kubectl') as cmd,patch.object(app,'wait_rollout') as wait:
+   app.rabbit_plugins(dict(namespace='dev',name='mq',enabled=True))
+   self.assertEqual(cmd.call_args.args[0][0],'patch');self.assertNotIn('replicas',cmd.call_args.args[0][-1]);wait.assert_not_called()
+
  def test_manifest_and_validation(self):
   app=lab.Apps('/tmp')
   c,k,objects,h=app.plan(dict(type='postgres',name='db',namespace='dev'))

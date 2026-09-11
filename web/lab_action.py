@@ -32,6 +32,8 @@ def main():
         if len(set(hosts))!=len(hosts):raise ValueError('Повторяются hostname приложений')
         apps.check_capacity(prepared)
         for c,plan in zip(validated,prepared):apps.deploy(c,plan)
+    elif action=='rabbit_plugins':
+        apps.rabbit_plugins(params)
     elif action in ('app_start','app_stop','app_restart'):
         from lab_apps import dns, MANAGER
         targets=params.get('apps',[])
