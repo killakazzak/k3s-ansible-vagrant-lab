@@ -44,7 +44,15 @@ def cluster_names():
 def cluster_env(root):
     return dict(ENV, VAGRANT_CWD=str(root), VAGRANT_DOTFILE_PATH=str(root / '.vagrant'))
 
+def next_cluster_name():
+    used = set(cluster_names())
+    index = 2  # The default profile is cluster1.
+    while 'k8s-cluster' + str(index) in used:
+        index += 1
+    return 'k8s-cluster' + str(index)
+
 def new_cluster(name, cidr):
+    name = name.strip() or next_cluster_name()
     if not re.fullmatch(r'[a-z][a-z0-9-]{0,30}', name) or name == 'default':
         raise ValueError('Имя: строчные латинские буквы, цифры и дефисы, до 31 символа')
     network = ipaddress.ip_network(cidr, strict=True)
@@ -70,7 +78,7 @@ def new_cluster(name, cidr):
         for filename in ['Vagrantfile', 'cluster.sh', 'deploy.sh', 'kubectl.sh', 'ansible.cfg']:
             shutil.copy2(ROOT / filename, temp / filename)
         (temp / 'vendor').symlink_to(ROOT / 'vendor', target_is_directory=True)
-        code = """require 'yaml';require 'json'; p=JSON.parse(STDIN.read); path='ansible/group_vars/all.yml'; s=File.read(path); {'vm_name_prefix'=>p['name']+'-', 'menu_node_prefix'=>p['name'], 'private_network_prefix'=>24}.each{|k,v| s=s.sub(/^#{k}:.*$/,k+': '+JSON.generate(v))}; File.write(path,s); groups={}; {'server'=>[11,'master',1], 'workers'=>[21,'worker',2]}.each{|role,(offset,label,count)| h={};count.times{|i| n=p['name']+'-'+label+(i+1).to_s;h[n]={'ansible_host'=>p['base']+(offset+i).to_s,'vagrant_id'=>n}};groups[role]={'hosts'=>h}};File.write('ansible/inventory.yml',YAML.dump({'all'=>{'children'=>groups}}))"""
+        code = """require 'yaml';require 'json'; p=JSON.parse(STDIN.read); path='ansible/group_vars/all.yml'; s=File.read(path); {'vm_name_prefix'=>'', 'menu_node_prefix'=>p['name'], 'private_network_prefix'=>24}.each{|k,v| s=s.sub(/^#{k}:.*$/,k+': '+JSON.generate(v))}; File.write(path,s); groups={}; {'server'=>[11,'master',1], 'workers'=>[21,'worker',2]}.each{|role,(offset,label,count)| h={};count.times{|i| n=p['name']+'-'+label+(i+1).to_s;h[n]={'ansible_host'=>p['base']+(offset+i).to_s,'vagrant_id'=>n}};groups[role]={'hosts'=>h}};File.write('ansible/inventory.yml',YAML.dump({'all'=>{'children'=>groups}}))"""
         proc = subprocess.run(['ruby','-e',code], cwd=temp, input=json.dumps({'name':name,'base':str(network.network_address).rsplit('.',1)[0]+'.'}), capture_output=True, text=True)
         if proc.returncode:
             raise ValueError('Не удалось создать конфигурацию: '+proc.stderr)
@@ -109,7 +117,7 @@ def config():
                               cpu=host.get('vm_cpus', cfg['vm_cpus'][role]),
                               ram=host.get('vm_memory_mb', cfg['vm_memory_mb'][role]),
                               disk=host.get('vm_disk_gb', cfg.get('vm_disk_gb', {}).get(role,64)), vagrant_id=host['vagrant_id']))
-    return dict(nodes=nodes, defaults={role:dict(cpu=cfg['vm_cpus'][role],ram=cfg['vm_memory_mb'][role],disk=cfg.get('vm_disk_gb',{}).get(role,64)) for role in ['server','workers']}, network=str(ipaddress.ip_network(str(nodes[0]['ip'])+'/'+str(cfg['private_network_prefix']) if nodes else cfg.get('private_network_cidr','192.168.58.0/24'), strict=False)), version=cfg['k3s_version'], provider=cfg['vm_provider'],
+    return dict(node_prefix=('k8s-cluster1' if cfg.get('menu_node_prefix', 'k3s') == 'k3s' else cfg['menu_node_prefix']), nodes=nodes, defaults={role:dict(cpu=cfg['vm_cpus'][role],ram=cfg['vm_memory_mb'][role],disk=cfg.get('vm_disk_gb',{}).get(role,64)) for role in ['server','workers']}, network=str(ipaddress.ip_network(str(nodes[0]['ip'])+'/'+str(cfg['private_network_prefix']) if nodes else cfg.get('private_network_cidr','192.168.58.0/24'), strict=False)), version=cfg['k3s_version'], provider=cfg['vm_provider'],
                 rancher=cfg.get('rancher_enabled', False), traefik=cfg.get('traefik_dashboard_enabled', False)
                 and 'traefik' not in cfg['disabled_components'])
 

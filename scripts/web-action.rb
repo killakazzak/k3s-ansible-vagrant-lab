@@ -37,7 +37,7 @@ if $PROGRAM_NAME == __FILE__
       allocator = WebAction.new(root, [])
       ip = params.fetch('ip', '').to_s.strip
       ip = allocator.next_node_ip(action == 'add_master' ? 'server' : 'workers') if ip.empty?
-      [params.fetch('name'), ip]
+      [params.fetch('name', ''), ip]
     when 'remove_master', 'remove_worker'
       group = action == 'remove_master' ? 'server' : 'workers'
       index = groups.fetch(group).fetch('hosts').keys.index(node)

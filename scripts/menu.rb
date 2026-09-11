@@ -173,7 +173,9 @@ class ClusterMenu
   def add_node(group, role, resources = {})
     data = inventory
     raise 'Кластер пуст. Сначала создайте кластер.' if hosts(data, 'server').empty?
-    name = ask("Имя нового #{role}, например k3s-#{role}3")
+    suggested = next_node_name(role)
+    name = ask("Имя нового #{role} [#{suggested}]").strip
+    name = suggested if name.empty?
     raise 'Имя: строчные латинские буквы, цифры, дефисы; до 63 символов' unless name.match?(/\A[a-z][a-z0-9-]{0,61}[a-z0-9]\z/)
     all = data['all']['children'].values.flat_map { |g| g['hosts'].to_a }
     raise 'Имя или vagrant_id уже заняты' if all.any? { |n, h| n == name || h['vagrant_id'] == name }

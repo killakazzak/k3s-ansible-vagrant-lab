@@ -1,5 +1,17 @@
 require 'ipaddr'
 module Creation
+  def node_prefix
+    prefix = settings.fetch('menu_node_prefix', 'k8s-cluster1')
+    prefix == 'k3s' ? 'k8s-cluster1' : prefix
+  end
+
+  def next_node_name(role)
+    names = inventory['all']['children'].values.flat_map { |g| g['hosts'].flat_map { |n,h| [n,h['vagrant_id']] } }
+    index = 1
+    index += 1 while names.include?("#{node_prefix}-#{role}#{index}")
+    "#{node_prefix}-#{role}#{index}"
+  end
+
   def next_node_ip(role)
     cfg = settings
     entries = inventory['all']['children'].values.flat_map { |g| g['hosts'].values }
@@ -72,7 +84,7 @@ module Creation
       raise 'В выбранном кластере уже есть VM. Для второго кластера нажмите «Новый кластер» и задайте отдельную подсеть. CPU/ОЗУ текущих узлов меняйте через «Настроить», состав — через добавление и удаление узлов. Для смены сети или диска требуется пересоздание выбранного кластера.' unless unchanged
       return [old, {}]
     end
-    name_prefix = cfg.fetch('menu_node_prefix','k3s')
+    name_prefix = node_prefix
     raise 'Некорректный префикс имён' unless name_prefix.match?(/\A[a-z][a-z0-9-]{0,40}\z/)
     generated = {'all'=>{'children'=>{}}}
     [['server','master',masters,offset[0]],['workers','worker',workers,offset[1]]].each do |role,label,total,start|

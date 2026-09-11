@@ -10,9 +10,11 @@ Dir.mktmpdir do |root|
   menu=WebAction.new(root,[])
   p={'masters'=>'3','workers'=>'2','server_cpu'=>'4','server_ram'=>'8192','server_disk'=>'100','workers_cpu'=>'2','workers_ram'=>'4096','workers_disk'=>'80','network_mode'=>'new','network'=>'192.168.59.0/24'}
   data,changes=menu.creation_plan(p)
-  assert(data['all']['children']['server']['hosts']['k3s-master3']['ansible_host']=='192.168.59.13')
-  assert(data['all']['children']['workers']['hosts']['k3s-worker2']['vm_disk_gb']==80)
+  assert(data['all']['children']['server']['hosts']['k8s-cluster1-master3']['ansible_host']=='192.168.59.13')
+  assert(data['all']['children']['workers']['hosts']['k8s-cluster1-worker2']['vm_disk_gb']==80)
   assert(changes['vm_cpus']['server']==4)
+  assert(menu.next_node_name('master') == 'k8s-cluster1-master1')
+  assert(menu.next_node_name('worker') == 'k8s-cluster1-worker1')
   small,_=menu.creation_plan(p.merge('network'=>'192.168.59.0/28'))
   addresses=small['all']['children'].values.flat_map{|g|g['hosts'].values.map{|h|h['ansible_host']}}
   assert(addresses.uniq.size==5 && addresses.include?('192.168.59.2'))
