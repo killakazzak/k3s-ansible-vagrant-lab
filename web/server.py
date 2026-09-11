@@ -470,7 +470,7 @@ class Handler(BaseHTTPRequestHandler):
         global JOB, STOPPING
         if not self.allowed():
             return
-        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods'):
+        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods', '/api/app-access'):
             return self.reply(404, {'error': 'Не найдено'})
         try:
             length = int(self.headers.get('Content-Length', 0))
@@ -492,6 +492,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/templates':
                 with LOCK:
                     return self.reply(200, lab_apps.save_template(data))
+            if self.path == '/api/app-access':
+                return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).access(data))
             if self.path == '/api/pods':
                 return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).workload_pods(data))
             if self.path == '/api/pod':

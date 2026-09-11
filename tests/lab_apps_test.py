@@ -4,6 +4,8 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'web'))
 import lab_apps as lab
 class LabTests(unittest.TestCase):
+ def setUp(self):
+  host=patch.object(lab.Apps,'host',side_effect=lambda c: c['host']+'.example.test' if c['host'] else '');host.start();self.addCleanup(host.stop)
  def test_manifest_and_validation(self):
   app=lab.Apps('/tmp')
   c,k,objects,h=app.plan(dict(type='postgres',name='db',namespace='dev'))
@@ -79,3 +81,12 @@ class LabTests(unittest.TestCase):
    with patch.object(app,'get',return_value=obj),patch.object(app,'kubectl') as cmd:
     with self.assertRaises(ValueError):app.change({'name':'app','namespace':'dev','kind':'StatefulSet','container':kind,'image':expected[kind]},'app_update')
     cmd.assert_not_called()
+ def test_panel_auth_and_connection(self):
+  for kind in ('postgres','redis','kafka'):
+   c,k,objects,h=lab.Apps('/tmp').plan({'name':'sample','namespace':'dev','type':kind})
+   auth=next(o for o in objects if o['kind']=='Secret' and o['metadata']['name']=='sample-ui-auth')
+   self.assertGreater(len(auth['stringData']['password']),20)
+   self.assertNotIn(auth['stringData']['password'],str([o for o in objects if o['kind']!='Secret']))
+   ui=next(o for o in objects if o['kind']=='Deployment' and o['metadata']['name']=='sample-ui')
+   self.assertIn('sample.dev.svc.cluster.local',str(objects))
+   if kind!='postgres':self.assertTrue(any(o['kind']=='Middleware' for o in objects))

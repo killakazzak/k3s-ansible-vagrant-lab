@@ -104,14 +104,14 @@ function drawGraph(){
 async function refreshGraph(){
  if(graphLoading)return;graphLoading=true;
  const cluster=selectedCluster;
- if(graphCluster!==cluster){graphData=null;graphSignature='';$('graph-route-info').replaceChildren();$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-detail').textContent='Загружаем карту выбранного кластера…';}
+ if(graphCluster!==cluster){graphData=null;$('pod-map').replaceChildren();graphSignature='';$('graph-route-info').replaceChildren();$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-detail').textContent='Загружаем карту выбранного кластера…';}
  $('graph-status').textContent='Получаем данные Kubernetes…';
- try{const data=await api('topology');if(cluster!==selectedCluster)return;const old=$('graph-route').value;const signature=JSON.stringify([cluster,data.nodes,data.services,data.pods,data.routes,data.endpoints]);const changed=signature!==graphSignature;graphSignature=signature;graphCluster=cluster;graphData=data;$('graph-route').replaceChildren();
+ try{const data=await api('topology');if(cluster!==selectedCluster)return;const old=$('graph-route').value;const signature=JSON.stringify([cluster,data.nodes,data.services,data.pods,data.routes,data.endpoints]);const changed=signature!==graphSignature;graphSignature=signature;graphCluster=cluster;graphData=data;drawPlacement();$('graph-route').replaceChildren();
  for(const r of data.routes){const o=document.createElement('option');o.value=r.id;o.textContent=`${routeURLs(r)[0]||r.host+' '+r.path} → ${r.namespace}/${r.name}`;$('graph-route').append(o)}
  if(data.routes.some(r=>r.id===old))$('graph-route').value=old;
  else {const demo=data.routes.find(r=>r.host.startsWith('nginx.'));if(demo)$('graph-route').value=demo.id;}
  $('graph-status').textContent=(data.warning?data.warning+' · ':'')+'Обновлено '+new Date(data.updated*1000).toLocaleTimeString();if(changed){$('graph-detail').textContent='Нажмите на Ingress, Service, Pod или узел — здесь появятся подробности.';drawGraph();}
- }catch(e){if(cluster===selectedCluster){graphData=null;graphSignature='';$('graph-route-info').replaceChildren();$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-status').textContent=e.message;$('graph-detail').textContent='Карта недоступна. Проверьте состояние выбранного кластера.';}}
+ }catch(e){if(cluster===selectedCluster){graphData=null;$('pod-map').replaceChildren();graphSignature='';$('graph-route-info').replaceChildren();$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-status').textContent=e.message;$('graph-detail').textContent='Карта недоступна. Проверьте состояние выбранного кластера.';}}
  finally{graphLoading=false;if(cluster!==selectedCluster)refreshGraph();}
 }
 $('graph-route').onchange=drawGraph;$('graph-refresh').onclick=refreshGraph;$('cluster-select').addEventListener('change',refreshGraph);
@@ -120,3 +120,13 @@ setInterval(()=>{if(!document.hidden)refreshGraph()},15000);refreshGraph();
 $('graph-motion').onclick=()=>{graphPaused=!graphPaused;syncGraphMotion()};
 graphReducedMotion.addEventListener('change',syncGraphMotion);
 document.addEventListener('visibilitychange',syncGraphMotion);
+
+function drawPlacement(){
+ const box=$('pod-map');box.replaceChildren();if(!graphData)return;const query=$('pod-filter').value.toLowerCase();
+ for(const node of [...graphData.nodes,{id:null,name:'Ожидают назначения',role:'Pending'}]){
+  const pods=graphData.pods.filter(p=>p.node===node.id||(!node.id&&!p.node)).filter(p=>JSON.stringify([p.name,p.namespace,p.containers]).toLowerCase().includes(query));if(!pods.length&&(!node.id||query))continue;
+  const column=element('article',undefined,'placement-node');column.append(element('h3',node.name),element('p',`${node.role} · ${node.ip||'—'} · ${pods.length} Pod`));
+  for(const pod of pods){const b=element('button',undefined,'placement-pod '+(pod.ready?'ready':'waiting'));b.append(element('strong',pod.name),element('span',pod.namespace+' · '+(pod.workload?.kind||'Pod')),element('span',(pod.ready?'● Ready':pod.phase)+' · рестарты '+(pod.statuses||[]).reduce((sum,c)=>sum+c.restarts,0)));b.onclick=()=>{labOpen(pod.name,pod.namespace+' · '+pod.node,null);const details=element('pre',JSON.stringify({workload:pod.workload,ip:pod.ip,created:pod.created,qos:pod.qos,containers:pod.containers,statuses:pod.statuses,volumes:pod.volumes,labels:pod.labels},null,2),'diagnostic-output');const logs=element('button','Логи, события и терминал','button primary');logs.type='button';logs.onclick=()=>showPodDiagnostics(pod);$('lab-extra').append(details,logs)};column.append(b)}box.append(column);
+ }
+}
+$('pod-filter').oninput=drawPlacement;

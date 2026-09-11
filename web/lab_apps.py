@@ -1,5 +1,6 @@
 """Application catalogue, repeatable templates and scoped Kubernetes diagnostics."""
-import json, os, re, secrets, subprocess, tempfile, time
+import json, os, re, secrets, subprocess, tempfile, time, base64
+import app_panels
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER = 'k3s-lab-catalog'
@@ -81,12 +82,36 @@ class Apps:
         self.kubectl(['apply','--server-side','--field-manager='+MANAGER,'-f','-'],{'apiVersion':'v1','kind':'List','items':objects})
     def listing(self):
         items=self.get('deployments.apps,statefulsets.apps')['items'];out=[]
+        routes=self.get('ingress')['items']
         for obj in items:
             m=obj['metadata'];ns=m.get('namespace','default')
             if ns in PROTECTED or ns.startswith(('kube-','cattle-')):continue
+            if m.get('labels',{}).get('lab.k3s/panel-for'):continue
             containers=obj['spec']['template']['spec']['containers']
             out.append(dict(name=m['name'],namespace=ns,kind=obj['kind'],replicas=obj['spec'].get('replicas',1),ready=obj.get('status',{}).get('readyReplicas',0),containers=[dict(name=c['name'],image=c['image']) for c in containers],managed=m.get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER,type=m.get('labels',{}).get('lab.k3s/type','custom')))
+        for app in out:
+            app['urls']=[{'title':i['metadata']['name'],'url':'http://'+r['host']+'/'} for i in routes if i['metadata'].get('namespace')==app['namespace'] for r in i.get('spec',{}).get('rules',[]) if r.get('host') and any(p.get('backend',{}).get('service',{}).get('name') in (app['name'],app['name']+'-ui') for p in r.get('http',{}).get('paths',[]))]
         return out
+    def access(self,data):
+        ns=namespace(data.get('namespace'));name=dns(data.get('name'));kind=data.get('kind')
+        if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный workload')
+        workload=self.get(kind,ns,name)
+        if workload['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')!=MANAGER:raise ValueError('Учётные данные доступны для приложений каталога')
+        def secret(n):
+            obj=self.find('secret',ns,n)
+            return {k:base64.b64decode(v).decode() for k,v in (obj or {}).get('data',{}).items()}
+        result={'connection':name+'.'+ns+'.svc.cluster.local','panels':[]}
+        panel=secret(name+'-ui-auth')
+        if panel:result['panels'].append({k:panel.get(k,'') for k in ('title','url','username','password')})
+        ctype=workload['metadata']['labels'].get('lab.k3s/type')
+        if ctype in ('postgres','rabbitmq'):
+            credentials=secret(name+'-auth');result['username']='app';result['password']=credentials.get('password','')
+        else:result['note']='У приложения нет отдельного пароля подключения.'
+        for ingress in self.get('ingress',ns)['items']:
+            for rule in ingress.get('spec',{}).get('rules',[]):
+                if any(p.get('backend',{}).get('service',{}).get('name')==name for p in rule.get('http',{}).get('paths',[])):
+                    result['panels'].append(dict(title='RabbitMQ Management' if ctype=='rabbitmq' else 'Сайт приложения',url='http://'+rule['host']+'/',username=result.get('username',''),password=result.get('password','')))
+        return result
     def workload_pods(self,data):
         ns=namespace(data.get('namespace'));name=dns(data.get('name'));kind=data.get('kind')
         if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный тип workload')
@@ -146,14 +171,20 @@ class Apps:
         objects.append(workload)
         service=resource('v1','Service');service['spec']=dict(type='ClusterIP',selector=selector,ports=[dict(name='app',port=c['port'],targetPort='app')]);objects.append(service)
         if c['type']=='rabbitmq':service['spec']['ports'].append(dict(name='management',port=15672,targetPort='management'))
-        host=self.host(c)
+        host=self.host(dict(c,host=c['host'] or (name+'-'+ns if c['type']=='rabbitmq' else '')))
         if host:
             ingress=resource('networking.k8s.io/v1','Ingress');ingress['metadata']['annotations']={'traefik.ingress.kubernetes.io/router.entrypoints':'web'}
             ingress['spec']=dict(ingressClassName='traefik',rules=[{'host':host,'http':{'paths':[{'path':'/','pathType':'Prefix','backend':{'service':{'name':name,'port':{'number':15672 if c['type']=='rabbitmq' else c['port']}}}}]}}]);objects.append(ingress)
+        if c['type'] in app_panels.IMAGES:
+            panelhost=self.host(dict(c,host=c['name']+'-'+ns+'-ui'))
+            objects.extend(app_panels.build(c,panelhost,MANAGER))
         return c,kind,objects,host
     def preflight(self,config):
         c,kind,objects,host=self.plan(config)
         for obj in objects:
+            if obj['kind']=='Ingress':
+                panelhost=obj['spec']['rules'][0]['host']
+                if any(r.get('host')==panelhost for i in self.get('ingress')['items'] for r in i.get('spec',{}).get('rules',[])):raise ValueError('Hostname уже используется: '+panelhost)
             existing=self.find(obj['kind'],c['namespace'],obj['metadata']['name'])
             if existing:raise ValueError(f"{obj['kind']} {c['namespace']}/{obj['metadata']['name']} уже существует. Используйте изменение версии/реплик.")
         for other in ('Deployment','StatefulSet'):
@@ -171,6 +202,9 @@ class Apps:
         self.apply(objects)
         print(self.kubectl(['rollout','status',kind.lower()+'/'+name,'-n',ns,'--timeout=240s'],timeout=250),flush=True)
         self.check(c,kind,host)
+        if c['type'] in app_panels.IMAGES:
+            print(self.kubectl(['rollout','status','deployment/'+name+'-ui','-n',ns,'--timeout=300s'],timeout=310),flush=True)
+            print('Веб-панель: '+next(o['stringData']['url'] for o in objects if o['kind']=='Secret' and o['metadata']['name']==name+'-ui-auth')+' — учётные данные в карточке приложения.',flush=True)
         print('Готово: '+(host and 'http://'+host+'/' or name+'.'+ns+'.svc.cluster.local:'+str(c['port'])),flush=True)
         if c['type']=='rabbitmq':print('RabbitMQ: пользователь app, пароль в Secret '+ns+'/'+name+'-auth (ключ password).',flush=True)
         if c['type']=='postgres':print('PostgreSQL: пользователь app, база app, пароль в Secret '+ns+'/'+name+'-auth (ключ password).',flush=True)

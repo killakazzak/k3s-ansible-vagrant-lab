@@ -229,7 +229,7 @@ class RepeatedLaunchTests(unittest.TestCase):
             root = Path(folder)
             (root / 'web').mkdir()
             shutil.copy(Path(app.__file__), root / 'web/server.py')
-            for name in ('terminal_sessions.py', 'terminal_child.py', 'topology.py', 'lab_apps.py'):
+            for name in ('terminal_sessions.py', 'terminal_child.py', 'topology.py', 'lab_apps.py', 'app_panels.py'):
                 shutil.copy(Path(app.__file__).with_name(name), root / 'web' / name)
             command = [sys.executable, str(root / 'web/server.py'), '--port', '0']
             first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

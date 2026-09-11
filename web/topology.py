@@ -27,13 +27,13 @@ def build(items):
             master=any(k in meta.get('labels',{}) for k in ('node-role.kubernetes.io/control-plane','node-role.kubernetes.io/master'))
             nodes.append(dict(id=name,name=name,role='Master' if master else 'Worker',ready=any(c.get('type')=='Ready' and c.get('status')=='True' for c in status.get('conditions',[])),ip=next((a['address'] for a in status.get('addresses',[]) if a['type']=='InternalIP'),'')))
         elif kind=='Pod':
-            pods.append(dict(id=key,name=name,namespace=ns,node=spec.get('nodeName'),workload=ownership(obj),ip=status.get('podIP',''),phase=status.get('phase','Unknown'),ready=any(c.get('type')=='Ready' and c.get('status')=='True' for c in status.get('conditions',[]))))
+            pods.append(dict(id=key,name=name,namespace=ns,node=spec.get('nodeName'),workload=ownership(obj),created=meta.get('creationTimestamp',''),qos=status.get('qosClass',''),labels=meta.get('labels',{}),containers=[dict(name=c.get('name',''),image=c.get('image',''),resources=c.get('resources',{}),ports=c.get('ports',[])) for c in spec.get('containers',[])],statuses=[dict(name=c['name'],ready=c.get('ready'),restarts=c.get('restartCount',0),state=c.get('state',{})) for c in status.get('containerStatuses',[])],volumes=[dict(name=v['name'],claim=v.get('persistentVolumeClaim',{}).get('claimName')) for v in spec.get('volumes',[])],ip=status.get('podIP',''),phase=status.get('phase','Unknown'),ready=any(c.get('type')=='Ready' and c.get('status')=='True' for c in status.get('conditions',[]))))
         elif kind=='Service':
             services.append(dict(id=key,name=name,namespace=ns,type=spec.get('type','ClusterIP'),headless=spec.get('clusterIP')=='None',ip=spec.get('clusterIP',''),external=spec.get('externalName',''),ports=spec.get('ports',[])))
         elif kind=='EndpointSlice':
             service=meta.get('labels',{}).get('kubernetes.io/service-name')
             if not service:continue
-            for endpoint in obj.get('endpoints',[]):
+            for endpoint in (obj.get('endpoints') or []):
                 target=endpoint.get('targetRef',{})
                 endpoints.append(dict(service=ns+'/'+service,pod=(target.get('namespace',ns)+'/'+target['name']) if target.get('kind')=='Pod' and target.get('name') else None,addresses=endpoint.get('addresses',[]),ready=endpoint.get('conditions',{}).get('ready'),node=endpoint.get('nodeName')))
         elif kind=='Ingress':
