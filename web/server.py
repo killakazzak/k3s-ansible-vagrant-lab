@@ -33,6 +33,7 @@ ENV['PATH'] = ENV.get('PATH', '') + ':/opt/homebrew/bin:/opt/vagrant/bin:/usr/lo
 ENV['VAGRANT_CWD'] = str(ROOT)
 ENV['VAGRANT_DOTFILE_PATH'] = str(ROOT / '.vagrant')
 CONTEXT = threading.local()
+YAML_PREVIEWS = {}
 def active_root():
     return getattr(CONTEXT, 'root', ROOT)
 
@@ -522,11 +523,11 @@ class Handler(BaseHTTPRequestHandler):
         global JOB, STOPPING
         if not self.allowed():
             return
-        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods', '/api/app-access', '/api/resource-yaml'):
+        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods', '/api/app-access', '/api/resource-yaml', '/api/yaml-preview', '/api/yaml-apply'):
             return self.reply(404, {'error': 'Не найдено'})
         try:
             length = int(self.headers.get('Content-Length', 0))
-            if not 0 < length <= 32768:
+            if not 0 < length <= (2097152 if self.path=='/api/yaml-preview' else 32768):
                 raise ValueError('Некорректный размер запроса')
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
@@ -548,6 +549,24 @@ class Handler(BaseHTTPRequestHandler):
                     if operation=='from_apps':return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).template_from_apps(data))
                     if operation!='save':raise ValueError('Неизвестная операция с шаблоном')
                     return self.reply(200, lab_apps.save_template(data))
+            if self.path in ('/api/yaml-preview','/api/yaml-apply'):
+                with LOCK:
+                    if JOB and JOB['state']=='running':return self.reply(409,{'error':'Дождитесь завершения текущей операции.'})
+                    root=active_root();apps=lab_apps.Apps(root,cluster_env(root))
+                    for key in list(YAML_PREVIEWS):
+                        if YAML_PREVIEWS[key]['expires']<time.time():del YAML_PREVIEWS[key]
+                    if self.path=='/api/yaml-preview':
+                        candidate,diff=apps.yaml_preview(data)
+                        token=secrets.token_urlsafe(32)
+                        if len(YAML_PREVIEWS)>=32:YAML_PREVIEWS.pop(next(iter(YAML_PREVIEWS)))
+                        YAML_PREVIEWS[token]=dict(root=str(root),candidate=candidate,expires=time.time()+300)
+                        return self.reply(200,dict(token=token,diff=diff,changed=bool(diff)))
+                    if data.get('confirmed') is not True:raise ValueError('Подтвердите применение изменений')
+                    preview=YAML_PREVIEWS.get(data.get('token',''))
+                    if not preview or preview['root']!=str(root):raise ValueError('Просмотр изменений устарел. Проверьте YAML повторно.')
+                    result=apps.yaml_apply(preview['candidate'])
+                    del YAML_PREVIEWS[data['token']]
+                    return self.reply(200,result)
             if self.path == '/api/resource-yaml':
                 return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).resource_yaml(data))
             if self.path == '/api/app-access':

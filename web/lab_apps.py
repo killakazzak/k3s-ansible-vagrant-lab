@@ -102,6 +102,10 @@ def storage_location(pv,nodes):
     candidates=[dict(name=n['metadata']['name'],ip=next((a['address'] for a in n.get('status',{}).get('addresses',[]) if a['type']=='InternalIP'),'')) for n in nodes if any(matches(n,t) for t in terms)]
     return dict(kind='Локальный диск VM',nodes=candidates,path=local.get('path',''),note='Путь внутри VM, а не на Mac.' if len(candidates)==1 else 'PV не определяет единственный узел хранения; показаны ограничения размещения.')
 
+def resource_name(value):
+    if not isinstance(value,str) or len(value)>253 or not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?',value) or '..' in value:raise ValueError('Некорректное имя ресурса')
+    return value
+
 def rabbit_startup(enabled):
     operation='enable' if enabled else 'disable'
     return ['sh','-ec','rabbitmq-plugins --offline '+operation+' rabbitmq_shovel_management rabbitmq_shovel; exec docker-entrypoint.sh rabbitmq-server']
@@ -212,11 +216,48 @@ class Apps:
         if not enabled and {'rabbitmq_shovel','rabbitmq_shovel_management'}&active:raise ValueError('Shovel не подтвердил отключение')
         print('Shovel '+('включён. В RabbitMQ: Admin → Shovel Management.' if enabled else 'выключен.')+' Настройка сохранена в StatefulSet.',flush=True)
 
+    def yaml_edit_object(self,data):
+        resources={'pods':'pods','pvcs':'persistentvolumeclaims','secrets':'secrets','deployments':'deployments.apps','statefulsets':'statefulsets.apps','daemonsets':'daemonsets.apps','jobs':'jobs.batch','cronjobs':'cronjobs.batch','services':'services','ingresses':'ingresses.networking.k8s.io','configmaps':'configmaps'}
+        resource=resources.get(data.get('type'))
+        if not resource:raise ValueError('Неизвестный тип ресурса')
+        ns=namespace(data.get('namespace'));name=resource_name(data.get('name'))
+        return self.get(resource,ns,name)
+
+    def yaml_preview(self,data):
+        import difflib
+        source=data.get('yaml')
+        if not isinstance(source,str) or not 0<len(source.encode())<=1048576:raise ValueError('YAML должен быть не больше 1 MiB')
+        # Safe YAML parser already available with the project's Ruby runtime.
+        code="require 'yaml';require 'json';require 'date';source=STDIN.read;raise 'one object required' unless Psych.parse_stream(source).children.length==1;puts JSON.generate(YAML.safe_load(source, permitted_classes: [Date, Time], aliases: false))"
+        parsed=subprocess.run(['ruby','-e',code],input=source,text=True,capture_output=True,timeout=10)
+        if parsed.returncode:raise ValueError('Некорректный YAML: проверьте отступы и синтаксис. Разрешён один объект без YAML aliases.')
+        candidate=json.loads(parsed.stdout);live=self.yaml_edit_object(data)
+        if not isinstance(candidate,dict):raise ValueError('Ожидается один объект Kubernetes')
+        meta=candidate.get('metadata',{});original=live['metadata']
+        if not isinstance(meta,dict):raise ValueError('Некорректная metadata')
+        if (candidate.get('apiVersion'),candidate.get('kind'),meta.get('name'),meta.get('namespace'))!=(live['apiVersion'],live['kind'],original['name'],original.get('namespace')):raise ValueError('Нельзя менять apiVersion, kind, имя или namespace в редакторе ресурса')
+        if meta.get('resourceVersion')!=original.get('resourceVersion') or meta.get('uid')!=original.get('uid'):raise ValueError('Ресурс изменился или изменены uid/resourceVersion. Загрузите свежий YAML.')
+        def clean(obj):
+            obj=json.loads(json.dumps(obj));obj.pop('status',None);obj['metadata'].pop('managedFields',None);return obj
+        before=clean(live);candidate=clean(candidate)
+        # Server admission/defaulting and immutable field checks, without persistence.
+        validated=json.loads(self.kubectl(['replace','--dry-run=server','-f','-','-o','json'],candidate))
+        after=clean(validated)
+        def yaml_dump(obj):
+            return subprocess.run(['ruby','-rjson','-ryaml','-e','puts YAML.dump(JSON.parse(STDIN.read))'],input=json.dumps(obj),text=True,capture_output=True,check=True,timeout=10).stdout
+        diff=''.join(difflib.unified_diff(yaml_dump(before).splitlines(True),yaml_dump(after).splitlines(True),fromfile='Текущая версия',tofile='После применения'))
+        return candidate,diff
+
+    def yaml_apply(self,candidate):
+        # resourceVersion makes replacement atomic and rejects concurrent changes.
+        result=json.loads(self.kubectl(['replace','-f','-','-o','json'],candidate))
+        return dict(ok=True,name=result['metadata']['name'],resourceVersion=result['metadata']['resourceVersion'])
+
     def resource_yaml(self,data):
         resources={'pods':'pods','pvcs':'persistentvolumeclaims','secrets':'secrets','deployments':'deployments.apps','statefulsets':'statefulsets.apps','daemonsets':'daemonsets.apps','jobs':'jobs.batch','cronjobs':'cronjobs.batch','services':'services','ingresses':'ingresses.networking.k8s.io','configmaps':'configmaps'}
         resource=resources.get(data.get('type'))
         if not resource:raise ValueError('Неизвестный тип ресурса')
-        ns=namespace(data.get('namespace'));name=dns(data.get('name'))
+        ns=namespace(data.get('namespace'));name=resource_name(data.get('name'))
         output=self.kubectl(['get',resource,name,'-n',ns,'-o','yaml','--show-managed-fields=false','--request-timeout=10s'])
         return dict(yaml=output,filename=ns+'_'+data['type']+'_'+name+'.yaml')
 
@@ -326,7 +367,7 @@ class Apps:
         if workload['metadata'].get('annotations',{}).get('lab.k3s/external-pvc'):delete_data=False
         print(('Приложение и веб-панель удалены. ' if managed else 'Workload удалён; внешние Service/Ingress сохранены. ')+('PVC и пароль базы удалены.' if delete_data else 'PVC и пароль базы сохранены.'),flush=True)
     def access(self,data):
-        ns=namespace(data.get('namespace'));name=dns(data.get('name'));kind=data.get('kind')
+        ns=namespace(data.get('namespace'));name=resource_name(data.get('name'));kind=data.get('kind')
         if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный workload')
         workload=self.get(kind,ns,name)
         if workload['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')!=MANAGER:raise ValueError('Учётные данные доступны для приложений каталога')
@@ -348,7 +389,7 @@ class Apps:
                     result['panels'].append(dict(title='RabbitMQ Management' if ctype=='rabbitmq' else 'Сайт приложения',url='http://'+rule['host']+'/',username=result.get('username',''),password=result.get('password','')))
         return result
     def workload_pods(self,data):
-        ns=namespace(data.get('namespace'));name=dns(data.get('name'));kind=data.get('kind')
+        ns=namespace(data.get('namespace'));name=resource_name(data.get('name'));kind=data.get('kind')
         if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный тип workload')
         obj=self.get(kind,ns,name);selector=obj['spec']['selector']
         def matches(labels):

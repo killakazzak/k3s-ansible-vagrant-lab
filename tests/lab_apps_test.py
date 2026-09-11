@@ -95,6 +95,17 @@ class LabTests(unittest.TestCase):
    app.rabbit_plugins(dict(namespace='dev',name='mq',enabled=True))
    self.assertEqual(cmd.call_args.args[0][0],'patch');self.assertNotIn('replicas',cmd.call_args.args[0][-1]);wait.assert_not_called()
 
+ def test_yaml_preview_validates_identity_and_only_dry_runs(self):
+  import json
+  app=lab.Apps('/tmp');obj={'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'settings','namespace':'dev','uid':'id','resourceVersion':'10'},'data':{'key':'old'}}
+  changed=json.loads(json.dumps(obj));changed['data']['key']='new'
+  with patch.object(app,'yaml_edit_object',return_value=obj),patch.object(app,'kubectl',return_value=json.dumps(changed)) as cmd:
+   candidate,diff=app.yaml_preview(dict(type='configmaps',name='settings',namespace='dev',yaml=json.dumps(changed)))
+   self.assertIn('--dry-run=server',cmd.call_args.args[0]);self.assertIn('+',diff);self.assertEqual(candidate['data']['key'],'new')
+   changed['metadata']['resourceVersion']='9'
+   with self.assertRaisesRegex(ValueError,'свежий YAML'):app.yaml_preview(dict(yaml=json.dumps(changed)))
+  with self.assertRaises(ValueError):app.yaml_preview(dict(yaml='kind: ConfigMap\n---\nkind: Secret'))
+
  def test_manifest_and_validation(self):
   app=lab.Apps('/tmp')
   c,k,objects,h=app.plan(dict(type='postgres',name='db',namespace='dev'))

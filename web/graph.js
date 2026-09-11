@@ -199,6 +199,15 @@ async function openResourceYaml(type,item,download=false){
  const output=element('pre','Загрузка YAML…','resource-yaml-output');$('lab-extra').append(output);
  try{const data=await api('resource-yaml',{type,name:item.name,namespace:item.namespace});if(cluster!==selectedCluster||!output.isConnected)return;output.textContent=data.yaml;
  const save=()=>{const blob=new Blob([data.yaml],{type:'application/yaml;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=data.filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)};
- const controls=element('div',undefined,'resource-yaml-actions');controls.append(resourceButton('↓ Скачать YAML',save));$('lab-extra').prepend(controls);if(download)save();
+ const controls=element('div',undefined,'resource-yaml-actions');controls.append(resourceButton('Редактировать YAML',()=>editResourceYaml(type,item,data.yaml)),resourceButton('↓ Скачать YAML',save));$('lab-extra').prepend(controls);if(download)save();
  }catch(e){if(output.isConnected)output.textContent='Не удалось получить YAML: '+e.message}
+}
+
+function editResourceYaml(type,item,source){
+ labOpen('Редактировать YAML · '+item.name,'Проверьте изменения перед применением. Изменение spec может перезапустить Pod. Поле status не редактируется; имя, namespace, uid и resourceVersion должны сохраниться.',null);
+ const editor=document.createElement('textarea');editor.className='resource-yaml-editor';editor.value=source;editor.spellcheck=false;editor.setAttribute('aria-label','Редактор YAML');
+ const preview=element('div',undefined,'resource-yaml-diff');const message=element('p','','lab-note');message.setAttribute('role','status');const actions=element('div',undefined,'resource-yaml-actions');let token=null;
+ const apply=resourceButton('Применить изменения',async()=>{try{sameCluster();apply.disabled=true;await api('yaml-apply',{token,confirmed:true});token=null;message.textContent='Изменения применены.';await Promise.allSettled([refreshExtraResources(),refreshGraph(),refreshPVCs(),refreshSecrets()])}catch(e){token=null;message.textContent=e.message}finally{apply.disabled=true}},'button primary');apply.disabled=true;
+ const check=resourceButton('Проверить и показать изменения',async()=>{try{sameCluster();token=null;apply.disabled=true;check.disabled=true;const text=editor.value;message.textContent='Проверка Kubernetes…';const result=await api('yaml-preview',{type,name:item.name,namespace:item.namespace,yaml:text});if(!editor.isConnected||labCluster!==selectedCluster)return;if(editor.value!==text){message.textContent='Текст изменён. Повторите проверку.';return}preview.replaceChildren();for(const line of result.diff.split('\n'))preview.append(element('div',line||' ',line.startsWith('+')?'yaml-added':line.startsWith('-')?'yaml-removed':''));token=result.token;apply.disabled=!result.changed;message.textContent=result.changed?'Проверка пройдена. Просмотрите изменения и нажмите «Применить изменения».':'Изменений нет.'}catch(e){message.textContent=e.message}finally{check.disabled=false}});
+ editor.oninput=()=>{token=null;apply.disabled=true;preview.replaceChildren();message.textContent='Текст изменён. Требуется повторная проверка.'};actions.append(check,apply);$('lab-extra').append(editor,actions,message,preview);
 }

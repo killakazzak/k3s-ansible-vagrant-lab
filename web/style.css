@@ -67,3 +67,5 @@
 #resources .resource-toolbar>.resource-tabs{flex-wrap:wrap;width:100%;box-sizing:border-box}#resource-detail .pvc-details dd{white-space:pre-wrap;overflow-wrap:anywhere}
 
 .resource-yaml-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.resource-yaml-actions .button{font-size:11px;padding:8px 10px}.resource-yaml-output{background:#152e31;color:#d6e5dc;padding:18px;border-radius:12px;max-height:55vh;overflow:auto;font:12px/1.6 monospace;white-space:pre;tab-size:2}
+
+.resource-yaml-editor{display:block;width:100%;height:42vh;box-sizing:border-box;padding:16px;border-radius:10px;background:#152e31;color:#d6e5dc;font:12px/1.6 monospace;white-space:pre;overflow:auto;resize:vertical;margin:12px 0}.resource-yaml-diff{font:12px/1.6 monospace;white-space:pre;overflow:auto;max-height:35vh;background:#f5f8f6;border-radius:10px}.resource-yaml-diff>div{padding:0 10px}.yaml-added{background:#dff2e5;color:#245e39}.yaml-removed{background:#fbe5e2;color:#913f34}
