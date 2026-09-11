@@ -121,12 +121,19 @@ $('graph-motion').onclick=()=>{graphPaused=!graphPaused;syncGraphMotion()};
 graphReducedMotion.addEventListener('change',syncGraphMotion);
 document.addEventListener('visibilitychange',syncGraphMotion);
 
+const placementNamespaces=new Map();
 function drawPlacement(){
  const box=$('pod-map');box.replaceChildren();if(!graphData)return;const query=$('pod-filter').value.toLowerCase();
+ const namespaces=[...new Set(graphData.pods.map(p=>p.namespace))].sort();const select=$('pod-namespace');let chosen=placementNamespaces.get(selectedCluster)||'';if(!namespaces.includes(chosen))chosen='';placementNamespaces.set(selectedCluster,chosen);select.replaceChildren();
+ for(const ns of ['',...namespaces]){const option=element('option',(ns||'Все (All)')+' · '+graphData.pods.filter(p=>!ns||p.namespace===ns).length);option.value=ns;select.append(option)}select.value=chosen;
+ const visible=graphData.pods.filter(p=>(!chosen||p.namespace===chosen)&&JSON.stringify([p.name,p.namespace,p.containers]).toLowerCase().includes(query));
+ $('pod-filter-summary').textContent=`${chosen||'Все namespace'} · показано ${visible.length} из ${graphData.pods.length} Pod · обновление каждые 15 секунд`;
  for(const node of [...graphData.nodes,{id:null,name:'Ожидают назначения',role:'Pending'}]){
-  const pods=graphData.pods.filter(p=>p.node===node.id||(!node.id&&!p.node)).filter(p=>JSON.stringify([p.name,p.namespace,p.containers]).toLowerCase().includes(query));if(!pods.length&&(!node.id||query))continue;
+  const pods=visible.filter(p=>p.node===node.id||(!node.id&&!p.node));if(!pods.length)continue;
   const column=element('article',undefined,'placement-node');column.append(element('h3',node.name),element('p',`${node.role} · ${node.ip||'—'} · ${pods.length} Pod`));
   for(const pod of pods){const b=element('button',undefined,'placement-pod '+(pod.ready?'ready':'waiting'));b.append(element('strong',pod.name),element('span',pod.namespace+' · '+(pod.workload?.kind||'Pod')),element('span',(pod.ready?'● Ready':pod.phase)+' · рестарты '+(pod.statuses||[]).reduce((sum,c)=>sum+c.restarts,0)));b.onclick=()=>{labOpen(pod.name,pod.namespace+' · '+pod.node,null);const details=element('pre',JSON.stringify({workload:pod.workload,ip:pod.ip,created:pod.created,qos:pod.qos,containers:pod.containers,statuses:pod.statuses,volumes:pod.volumes,labels:pod.labels},null,2),'diagnostic-output');const logs=element('button','Логи, события и терминал','button primary');logs.type='button';logs.onclick=()=>showPodDiagnostics(pod);$('lab-extra').append(details,logs)};column.append(b)}box.append(column);
  }
+ if(!visible.length)box.append(element('p','В выбранном namespace по этому запросу Pod не найдены.','panelnote'));
 }
 $('pod-filter').oninput=drawPlacement;
+$('pod-namespace').onchange=()=>{placementNamespaces.set(selectedCluster,$('pod-namespace').value);drawPlacement()};
