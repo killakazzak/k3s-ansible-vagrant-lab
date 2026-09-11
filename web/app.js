@@ -208,11 +208,9 @@ async function terminalApi(cluster, data) {
 }
 function fitShell(session) {
   if (session.element.hidden) return;
-  const cols = Math.max(20, Math.min(400, Math.floor((session.element.clientWidth - 20) / 8.4)));
-  if (session.term.cols !== cols) {
-    session.term.resize(cols, 24);
-    terminalApi(session.cluster, {operation:'resize',id:session.id,cols,rows:24}).catch(()=>{});
-  }
+  const previous = session.term.cols;
+  session.fit.fit();
+  if (session.term.cols !== previous) terminalApi(session.cluster, {operation:'resize',id:session.id,cols:session.term.cols,rows:session.term.rows}).catch(()=>{});
 }
 async function pollShell(session) {
   while (!session.closed) {
@@ -237,8 +235,9 @@ $('shell-open').onclick=async()=>{
     const result=await terminalApi(cluster,{operation:'open'});
     const element=document.createElement('div');element.className='shell-screen';$('shell-host').append(element);
     const term=new Terminal({cursorBlink:true,fontSize:14,fontFamily:'Menlo, monospace',rows:24,scrollback:3000,theme:{background:'#142e31',foreground:'#dbece7'}});
+    const fit=new FitAddon.FitAddon();term.loadAddon(fit);
     term.open(element);
-    const session={id:result.id,cluster,element,term,offset:0,status:'Подключён',closed:false,queue:Promise.resolve()};
+    const session={id:result.id,cluster,element,term,fit,offset:0,status:'Подключён',closed:false,queue:Promise.resolve()};
     shellSessions.set(cluster,session);
     term.onData(data=>{
       for (let i=0;i<data.length;i+=512) {

@@ -8,3 +8,6 @@
 
 .kubectl-console{border-top:1px solid #385052}.kubectl-console .terminalhead{border:0}.kubectl-console form{display:flex;align-items:center;gap:12px;padding:0 24px;color:#a9d5b7}.kubectl-console input{flex:1;min-width:0;background:#10282b;color:#e1f2e8;border:1px solid #486365;border-radius:10px;padding:14px;font:14px ui-monospace,monospace}.kubectl-help{padding:0 24px;color:#a8bdbc;font-size:12px}.kubectl-console pre{max-height:420px;white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:650px){.kubectl-console form{flex-wrap:wrap}.kubectl-console form button{width:100%}}
 .shell-actions{display:flex;gap:12px;padding:0 24px}.shell-screen{padding:16px 24px 24px}.shell-screen[hidden]{display:none}.shell-screen .xterm{padding:8px}.shell-screen .xterm-viewport{border-radius:8px}
+
+.shell-screen{height:450px}.shell-screen .xterm{height:100%;border-radius:0;background:#142e31}
+#shell-host{padding:16px 24px 24px}.shell-screen{padding:0;height:410px}.shell-screen .xterm{padding:0}
