@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nginx-demo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-page
+  namespace: nginx-demo
+data:
+  index.html: |
+    <!doctype html>
+    <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nginx · Kubernetes Lab</title>
+    <style>body{margin:0;background:#102c2d;color:#eff6ef;font:18px system-ui;min-height:100vh;display:grid;place-items:center}main{max-width:740px;padding:48px}small{color:#bde995;letter-spacing:3px}h1{font-size:clamp(40px,8vw,76px);line-height:1.05;margin:28px 0}p{color:#bfceca;line-height:1.7}.status{display:inline-block;background:#bde995;color:#16332b;border-radius:30px;padding:10px 20px;margin-top:20px}footer{margin-top:64px;color:#90a7a0;font-size:14px}</style></head>
+    <body><main><small>KUBERNETES LAB / NGINX</small><h1>Сайт работает.</h1><p>Тестовая страница опубликована через Ingress Traefik.<br>Запрос прошёл через Ingress и Service до Nginx в Kubernetes.</p><span class="status">● Nginx доступен</span><footer>NGINX → Service → Traefik · namespace: nginx-demo</footer></main></body></html>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-demo
+  namespace: nginx-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: nginx-demo}
+  template:
+    metadata:
+      labels: {app: nginx-demo}
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.30.4-alpine
+          ports:
+            - {name: http, containerPort: 80}
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          volumeMounts:
+            - {name: page, mountPath: /usr/share/nginx/html, readOnly: true}
+      volumes:
+        - name: page
+          configMap: {name: nginx-page}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-demo
+  namespace: nginx-demo
+spec:
+  selector: {app: nginx-demo}
+  ports:
+    - {port: 80, targetPort: http}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-demo
+  namespace: nginx-demo
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: nginx.192.168.59.11.sslip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-demo
+                port: {number: 80}
