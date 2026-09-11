@@ -4,6 +4,7 @@ require 'ipaddr'
 require 'fileutils'
 require 'json'
 require 'open3'
+require 'shellwords'
 require_relative 'creation'
 
 class ClusterMenu
@@ -304,10 +305,54 @@ class ClusterMenu
     end
   end
 
+  def cluster_profiles
+    root = File.expand_path(@root)
+    base = File.basename(File.dirname(root)) == '.clusters' ? File.expand_path('../..', root) : root
+    profiles = [['k8s-cluster1 (default)', base]]
+    Dir.glob(File.join(base, '.clusters', '*')).sort.each do |path|
+      next unless File.directory?(path) && !File.symlink?(path)
+      next unless File.basename(path).match?(/\A[a-z][a-z0-9-]{0,30}\z/)
+      next unless File.file?(File.join(path, 'ansible/inventory.yml'))
+      profiles << [File.basename(path), path]
+    end
+    profiles
+  end
+
+  def list_clusters
+    profiles = cluster_profiles
+    puts "\nКластеры — сохранённые профили (наличие kubeconfig не означает доступность API):"
+    profiles.each_with_index do |(name, path), index|
+      ready = File.file?(File.join(path, 'kubeconfig')) && File.size(File.join(path, 'kubeconfig')) > 0
+      selected = File.expand_path(@root) == path ? ' ← текущий' : ''
+      puts "#{index + 1}. #{name} — #{ready ? 'kubeconfig готов' : 'kubeconfig пока нет'}#{selected}"
+      puts "   #{path}"
+    end
+    profiles
+  end
+
+  def connect_kubectl
+    profiles = list_clusters
+    value = ask('Номер кластера для kubectl (0 — отмена)')
+    return if value == '0'
+    raise 'Неверный номер кластера' unless value.match?(/\A[1-9]\d*\z/) && value.to_i <= profiles.length
+    name, path = profiles[value.to_i - 1]
+    config = File.join(path, 'kubeconfig')
+    unless File.file?(config) && File.size(config) > 0
+      puts 'Доступ к кластеру пока не готов. Создайте кластер или дождитесь завершения развёртывания.'
+      return
+    end
+    puts "\nПодключение к #{name}:"
+    puts "kubectl --kubeconfig=#{Shellwords.escape(config)} get nodes -o wide"
+    puts "\nЧтобы следующие команды kubectl использовали этот кластер, выполните в своём терминале:"
+    puts "export KUBECONFIG=#{Shellwords.escape(config)}"
+    puts "\nПроверяю подключение…"
+    run(File.join(path, 'kubectl.sh'), 'get', 'nodes', '-o', 'wide', '--request-timeout=10s')
+  end
+
   def start
     loop do
       show
-      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Веб-интерфейс управления\n0. Выход"
+      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Веб-интерфейс управления\n13. Список кластеров\n14. Подключиться через kubectl\n0. Выход"
       begin
         case ask('Выбери номер')
         when '1' then create_cluster
@@ -325,6 +370,8 @@ class ClusterMenu
         when '10' then remove_master
         when '11' then run('ansible-playbook', 'ansible/access.yml')
         when '12' then run('./cluster.sh', 'web')
+        when '13' then list_clusters
+        when '14' then connect_kubectl
         when '0' then break
         else puts 'Выбери номер из меню.'
         end
