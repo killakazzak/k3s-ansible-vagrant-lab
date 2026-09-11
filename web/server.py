@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import terminal_sessions
 import topology
+import lab_apps
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV = dict(os.environ)
@@ -207,7 +208,8 @@ def new_cluster(name, cidr, params=None):
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.Lock()
 JOB = None
-ACTIONS = {'create', 'destroy', 'verify', 'add_master', 'add_worker', 'remove_master', 'remove_worker', 'resources', 'version'}
+LAB_ACTIONS = {'app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
+ACTIONS = LAB_ACTIONS | {'create', 'destroy', 'verify', 'add_master', 'add_worker', 'remove_master', 'remove_worker', 'resources', 'version'}
 DESTRUCTIVE = {'destroy', 'remove_master', 'remove_worker', 'version'}
 
 
@@ -253,6 +255,10 @@ def status():
         for node in result['nodes']: node['vm_state'] = 'unknown'
     if result['exists'] is False:
         for node in result['nodes']: node['state'] = 'Absent'
+        return result
+    if result['nodes'] and all(n.get('vm_state') in ('poweroff', 'saved', 'paused') for n in result['nodes']):
+        result['paused'] = True
+        for node in result['nodes']: node['state'] = 'Paused'
         return result
     try:
         live = json.loads(capture(['./kubectl.sh', 'get', 'nodes', '-o', 'json', '--request-timeout=5s'], 8))
@@ -339,7 +345,8 @@ def execute(job, payload):
         if payload['action'] == 'create' and payload.get('params', {}).get('network_mode') == 'new':
             proposed = ipaddress.ip_network(payload['params']['network'], strict=True)
             check_cluster_network(proposed, exclude=name)
-        p = subprocess.Popen(['ruby', 'scripts/web-action.rb'], cwd=root, env=cluster_env(root), stdin=subprocess.PIPE,
+        command = [sys.executable, str(ROOT / 'web/lab_action.py'), str(root)] if payload['action'] in LAB_ACTIONS else ['ruby', 'scripts/web-action.rb']
+        p = subprocess.Popen(command, cwd=root, env=cluster_env(root), stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         p.stdin.write(json.dumps(payload))
         p.stdin.close()
@@ -405,10 +412,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        if path in ('/', '/app.js', '/style.css', '/vendor/xterm.js', '/vendor/xterm.css', '/vendor/addon-fit.js', '/graph.js'):
+        if path in ('/', '/app.js', '/style.css', '/vendor/xterm.js', '/vendor/xterm.css', '/vendor/addon-fit.js', '/graph.js', '/apps.js'):
             if self.headers.get('Host') != '127.0.0.1:' + str(self.server.server_port):
                 return self.reply(403, {'error': 'Недопустимый Host'})
-            file, mime = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/vendor/xterm.js': ('vendor/xterm.js', 'text/javascript'), '/vendor/xterm.css': ('vendor/xterm.css', 'text/css'), '/vendor/addon-fit.js': ('vendor/addon-fit.js', 'text/javascript'), '/graph.js': ('graph.js', 'text/javascript')}[path]
+            file, mime = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/vendor/xterm.js': ('vendor/xterm.js', 'text/javascript'), '/vendor/xterm.css': ('vendor/xterm.css', 'text/css'), '/vendor/addon-fit.js': ('vendor/addon-fit.js', 'text/javascript'), '/graph.js': ('graph.js', 'text/javascript'), '/apps.js': ('apps.js', 'text/javascript')}[path]
             return self.reply(200, (ROOT / 'web' / file).read_bytes(), mime + '; charset=utf-8')
         if not self.allowed():
             return
@@ -430,6 +437,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, visible_clusters())
             if path in ('/api/credentials/rancher', '/api/credentials/traefik'):
                 return self.reply(200, credentials(path.rsplit('/', 1)[1]))
+            if path == '/api/apps':
+                return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).listing())
+            if path == '/api/templates':
+                return self.reply(200, lab_apps.templates())
             if path == '/api/topology':
                 if not (active_root() / 'kubeconfig').is_file():
                     return self.reply(409, {'error':'Карта появится после настройки кластера.'})
@@ -459,11 +470,11 @@ class Handler(BaseHTTPRequestHandler):
         global JOB, STOPPING
         if not self.allowed():
             return
-        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown'):
+        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods'):
             return self.reply(404, {'error': 'Не найдено'})
         try:
             length = int(self.headers.get('Content-Length', 0))
-            if not 0 < length <= 8192:
+            if not 0 < length <= 32768:
                 raise ValueError('Некорректный размер запроса')
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
@@ -478,6 +489,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if STOPPING:
                 return self.reply(409, {'error':'Веб-сервер завершает работу.'})
+            if self.path == '/api/templates':
+                with LOCK:
+                    return self.reply(200, lab_apps.save_template(data))
+            if self.path == '/api/pods':
+                return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).workload_pods(data))
+            if self.path == '/api/pod':
+                return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).diagnostics(data))
             if self.path == '/api/terminal':
                 env = cluster_env(active_root())
                 env['PATH'] = str(ROOT / '.tools') + ':' + env['PATH']
@@ -508,7 +526,7 @@ class Handler(BaseHTTPRequestHandler):
                 JOB = dict(cluster=self.headers.get('X-Lab-Cluster', 'default'), id=secrets.token_hex(8), action=action, state='running', log='', started=time.time())
                 threading.Thread(target=execute, args=(JOB, data), daemon=True).start()
             self.reply(202, {'ok': True})
-        except (ValueError, TypeError, OSError) as e:
+        except (ValueError, TypeError, OSError, subprocess.TimeoutExpired) as e:
             self.reply(400, {'error': str(e)})
 
 

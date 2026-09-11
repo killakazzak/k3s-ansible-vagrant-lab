@@ -60,8 +60,8 @@ function renderProgress() {
 }
 function render() {
   const ready=state.nodes.filter(n=>n.state==='Ready').length;
-  $('health').textContent=state.exists===false?'Не создан':state.reachable?'На связи':'Недоступен';
-  $('health-detail').textContent=state.exists===false?'ВМ удалены. Сохранена только конфигурация.':state.reachable?'Kubernetes API отвечает':'Нет подключения к API';
+  $('health').textContent=state.exists===false?'Не создан':state.paused?'Остановлен':state.reachable?'На связи':'Недоступен';
+  $('health-detail').textContent=state.exists===false?'ВМ удалены. Сохранена только конфигурация.':state.paused?'VM выключены, диски и данные сохранены.':state.reachable?'Kubernetes API отвечает':'Нет подключения к API';
   $('node-count').textContent=ready+' / '+state.nodes.length;
   $('roles').textContent=state.nodes.filter(n=>n.role==='server').length+' master · '+state.nodes.filter(n=>n.role==='workers').length+' workers';
   $('memory').textContent=(state.nodes.reduce((s,n)=>s+n.ram,0)/1024).toFixed(0)+' ГБ';

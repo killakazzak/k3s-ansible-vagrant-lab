@@ -74,7 +74,7 @@ function drawGraph(){
   g.append(svgEl('text',{x:29,y:26,class:'graph-title'},title.length>23?title.slice(0,21)+'…':title));
   g.append(svgEl('text',{x:14,y:50,class:'graph-subtitle'},subtitle.length>30?subtitle.slice(0,28)+'…':subtitle));
   g.append(svgEl('title',{},title+'\n'+subtitle));
-  const show=()=>{$('graph-detail').textContent=detail;svg.querySelectorAll('.selected').forEach(e=>e.classList.remove('selected'));g.classList.add('selected');};
+  const show=()=>{$('graph-detail').textContent=detail;svg.querySelectorAll('.selected').forEach(e=>e.classList.remove('selected'));g.classList.add('selected');if(id.startsWith('pod:')){const pod=graphData.pods.find(p=>'pod:'+p.id===id);if(pod)window.dispatchEvent(new CustomEvent('lab-pod',{detail:pod}));}};
   g.addEventListener('click',show);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();show()}});
   svg.append(g);positions.set(id,{x,y,col});
  }

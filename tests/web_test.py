@@ -33,6 +33,11 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(self.request('/api/shutdown', {})[0],409)
         self.assertFalse(app.STOPPING)
 
+    def test_lab_endpoints_require_auth(self):
+        for path, payload in [('/api/apps',None),('/api/templates',None),('/api/templates',{'name':'test','apps':[]}),('/api/pod',{'name':'p','namespace':'dev'}),('/api/pods',{'name':'app','namespace':'dev','kind':'Deployment'})]:
+            self.assertEqual(self.request(path,payload,token=False)[0],401)
+        self.assertEqual(self.request('/api/action',{'action':'app_deploy','params':{}})[0],400)
+
     def test_terminal_requires_auth_and_origin(self):
         with patch.object(app.terminal_sessions, 'handle') as handle:
             self.assertEqual(self.request('/api/terminal', {'operation':'open'}, token=False)[0],401)
@@ -224,7 +229,7 @@ class RepeatedLaunchTests(unittest.TestCase):
             root = Path(folder)
             (root / 'web').mkdir()
             shutil.copy(Path(app.__file__), root / 'web/server.py')
-            for name in ('terminal_sessions.py', 'terminal_child.py', 'topology.py'):
+            for name in ('terminal_sessions.py', 'terminal_child.py', 'topology.py', 'lab_apps.py'):
                 shutil.copy(Path(app.__file__).with_name(name), root / 'web' / name)
             command = [sys.executable, str(root / 'web/server.py'), '--port', '0']
             first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

@@ -389,7 +389,7 @@ class ClusterMenu
     show_web_link
     loop do
       show
-      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Запустить веб-сервер / показать ссылку\n13. Список кластеров\n14. Подключиться через kubectl\n15. Остановить веб-сервер\n0. Выход"
+      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Запустить веб-сервер / показать ссылку\n13. Список кластеров\n14. Подключиться через kubectl\n15. Остановить веб-сервер\n16. Остановить VM стенда (сохранить данные)\n17. Возобновить VM стенда\n0. Выход"
       begin
         case ask('Выбери номер')
         when '1' then create_cluster
@@ -410,6 +410,8 @@ class ClusterMenu
         when '13' then list_clusters
         when '14' then connect_kubectl
         when '15' then run(File.join(cluster_profiles.first.last, 'cluster.sh'), 'web-stop')
+        when '16' then run('./cluster.sh', 'stand-stop') if confirm('Штатно выключить VM этого стенда? Диски и данные сохранятся.')
+        when '17' then run('./cluster.sh', 'stand-start')
         when '0' then break
         else puts 'Выбери номер из меню.'
         end
