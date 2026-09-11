@@ -80,3 +80,6 @@ vagrant_installer_sha256: 8de08bd435ef8ae0fc5fbd6acefa9c68e62fb898c5ae0fbdacd268
 traefik_dashboard_enabled: true
 traefik_dashboard_hostname: "traefik.{{ hostvars[server_node].ansible_host }}.sslip.io"
 traefik_dashboard_username: admin
+
+# First image downloads can take more than ten minutes on a slow registry connection.
+bootstrap_rollout_timeout: 1200

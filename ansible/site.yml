@@ -314,21 +314,42 @@
       ansible.builtin.command: k3s kubectl -n kube-system rollout restart deployment/{{ item }}
       loop: "{{ ['coredns', 'local-path-provisioner'] + (['traefik'] if 'traefik' not in disabled_components else []) }}"
       when: k3s_embedded_etcd | bool and sqlite_db.stat.exists and not etcd_db.stat.exists
-    - name: Wait for bundled CoreDNS
-      ansible.builtin.command: k3s kubectl -n kube-system rollout status deployment/coredns --timeout={{ rollout_timeout }}s
-      changed_when: false
-    - name: Wait for Traefik deployment creation
-      ansible.builtin.command: k3s kubectl -n kube-system get deployment traefik
-      register: traefik_created
-      retries: 90
-      delay: 2
-      until: traefik_created.rc == 0
-      changed_when: false
-      when: "'traefik' not in disabled_components"
-    - name: Wait for Traefik readiness
-      ansible.builtin.command: k3s kubectl -n kube-system rollout status deployment/traefik --timeout={{ rollout_timeout }}s
-      changed_when: false
-      when: "'traefik' not in disabled_components"
+    - name: Wait for bundled components on first startup
+      block:
+        - name: Wait for bundled CoreDNS
+          ansible.builtin.command: k3s kubectl -n kube-system rollout status deployment/coredns --timeout={{ bootstrap_rollout_timeout }}s
+          changed_when: false
+        - name: Wait for Traefik deployment creation
+          ansible.builtin.command: k3s kubectl -n kube-system get deployment traefik
+          register: traefik_created
+          retries: "{{ (bootstrap_rollout_timeout | int / 2) | int }}"
+          delay: 2
+          until: traefik_created.rc == 0
+          changed_when: false
+          when: "'traefik' not in disabled_components"
+        - name: Wait for Traefik readiness
+          ansible.builtin.command: k3s kubectl -n kube-system rollout status deployment/traefik --timeout={{ bootstrap_rollout_timeout }}s
+          changed_when: false
+          when: "'traefik' not in disabled_components"
+      rescue:
+        - name: Collect startup diagnostics
+          ansible.builtin.command: "k3s kubectl -n kube-system {{ item }}"
+          loop:
+            - get pods -o wide
+            - get events --sort-by=.metadata.creationTimestamp
+            - describe pods
+          register: startup_diagnostics
+          changed_when: false
+          failed_when: false
+        - name: Show startup diagnostics
+          ansible.builtin.debug:
+            msg: "{{ item.stdout_lines | default([]) }}"
+          loop: "{{ startup_diagnostics.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+        - name: Stop after startup timeout
+          ansible.builtin.fail:
+            msg: Bundled components did not become ready. Check image pull and scheduling events above; fix the cause and run ./cluster.sh up --verify again. Existing VMs are preserved.
     - name: Read kubeconfig
       ansible.builtin.slurp:
         src: /etc/rancher/k3s/k3s.yaml
