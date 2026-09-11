@@ -363,6 +363,8 @@ def execute(job, payload):
                 pass  # Optional timing history must not fail a completed deployment.
 
 
+STOPPING = False
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
@@ -440,10 +442,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(500, {'error': str(e)})
 
     def do_POST(self):
-        global JOB
+        global JOB, STOPPING
         if not self.allowed():
             return
-        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal'):
+        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown'):
             return self.reply(404, {'error': 'Не найдено'})
         try:
             length = int(self.headers.get('Content-Length', 0))
@@ -452,6 +454,16 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError('Некорректный запрос')
+            if self.path == '/api/shutdown':
+                with LOCK:
+                    if JOB and JOB['state'] == 'running':
+                        return self.reply(409, {'error':'Сейчас выполняется операция с кластером. Дождитесь её завершения перед остановкой веб-сервера.'})
+                    STOPPING = True
+                self.reply(200, {'ok': True})
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
+            if STOPPING:
+                return self.reply(409, {'error':'Веб-сервер завершает работу.'})
             if self.path == '/api/terminal':
                 env = cluster_env(active_root())
                 env['PATH'] = str(ROOT / '.tools') + ':' + env['PATH']
@@ -462,7 +474,7 @@ class Handler(BaseHTTPRequestHandler):
                 if data.get('confirmed') is not True or not isinstance(data.get('params'), dict):
                     raise ValueError('Подтвердите создание кластера с выбранными параметрами')
                 with LOCK:
-                    if JOB and JOB['state'] == 'running':
+                    if STOPPING or (JOB and JOB['state'] == 'running'):
                         return self.reply(409, {'error':'Дождитесь текущей операции'})
                     result = new_cluster(data.get('name', ''), data.get('network', ''), data['params'])
                     payload = {'action':'create', 'confirmed':True, 'params':dict(data['params'], network_mode='existing')}
@@ -477,7 +489,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data.get('params', {}), dict):
                 raise ValueError('Некорректные параметры')
             with LOCK:
-                if JOB and JOB['state'] == 'running':
+                if STOPPING or (JOB and JOB['state'] == 'running'):
                     return self.reply(409, {'error': 'Дождитесь завершения текущей операции'})
                 JOB = dict(cluster=self.headers.get('X-Lab-Cluster', 'default'), id=secrets.token_hex(8), action=action, state='running', log='', started=time.time())
                 threading.Thread(target=execute, args=(JOB, data), daemon=True).start()

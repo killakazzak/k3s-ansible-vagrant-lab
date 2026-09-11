@@ -378,8 +378,8 @@ class ClusterMenu
         end
       end
     end
-    puts "\nВеб-консоль не запущена. Запуск в другом терминале:"
-    puts "#{Shellwords.escape(File.join(base, 'cluster.sh'))} web"
+    puts "\nВеб-консоль не запущена. Запуск — пункт 12 меню или команда:"
+    puts "#{Shellwords.escape(File.join(base, 'cluster.sh'))} web-start"
     puts 'После запуска откройте полный адрес, который появится в терминале.'
   rescue JSON::ParserError, KeyError, URI::InvalidURIError, SystemCallError
     puts "Веб-консоль: запустите #{Shellwords.escape(File.join(base, 'cluster.sh'))} web, чтобы получить актуальную ссылку."
@@ -389,7 +389,7 @@ class ClusterMenu
     show_web_link
     loop do
       show
-      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Веб-интерфейс управления\n13. Список кластеров\n14. Подключиться через kubectl\n0. Выход"
+      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Запустить веб-сервер / показать ссылку\n13. Список кластеров\n14. Подключиться через kubectl\n15. Остановить веб-сервер\n0. Выход"
       begin
         case ask('Выбери номер')
         when '1' then create_cluster
@@ -406,9 +406,10 @@ class ClusterMenu
         when '9' then add_master
         when '10' then remove_master
         when '11' then run('ansible-playbook', 'ansible/access.yml')
-        when '12' then run('./cluster.sh', 'web')
+        when '12' then run(File.join(cluster_profiles.first.last, 'cluster.sh'), 'web-start')
         when '13' then list_clusters
         when '14' then connect_kubectl
+        when '15' then run(File.join(cluster_profiles.first.last, 'cluster.sh'), 'web-stop')
         when '0' then break
         else puts 'Выбери номер из меню.'
         end

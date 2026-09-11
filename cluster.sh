@@ -13,7 +13,7 @@ fi
 export VAGRANT_CWD="$ROOT"
 export VAGRANT_DOTFILE_PATH="$ROOT/.vagrant"
 usage() {
-  echo 'Usage: ./cluster.sh {menu|web [--port PORT]|up [--verify]|destroy|status|verify}'
+  echo 'Usage: ./cluster.sh {menu|web [--port PORT]|web-start|web-stop|web-status|up [--verify]|destroy|status|verify}'
   echo 'up       Create/start the cluster and apply Ansible.'
   echo 'destroy  Delete the VMs of this project and their data without a prompt.'
   echo '         Removes local kubeconfig after successful deletion; preserves download caches.'
@@ -32,6 +32,10 @@ case "$command_name" in
     "$ROOT/scripts/install-vagrant.sh"
     "$ROOT/scripts/install-ansible.sh"
     exec python3 "$ROOT/web/server.py" "$@"
+    ;;
+  web-start|web-stop|web-status)
+    export PATH="$PATH:/opt/homebrew/bin:/opt/vagrant/bin:/usr/local/bin"
+    exec python3 "$ROOT/scripts/web-service.py" "${command_name#web-}" "$@"
     ;;
   up) exec "$ROOT/deploy.sh" "$@" ;;
   destroy|status|verify)

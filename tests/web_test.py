@@ -27,6 +27,12 @@ class ConsoleTests(unittest.TestCase):
         try:
             with urlopen(req) as response: return response.status, response.read()
         except HTTPError as e: return e.code, e.read()
+    def test_shutdown_refuses_active_job_and_requires_auth(self):
+        self.assertEqual(self.request('/api/shutdown', {}, token=False)[0],401)
+        app.JOB = {'state':'running'}
+        self.assertEqual(self.request('/api/shutdown', {})[0],409)
+        self.assertFalse(app.STOPPING)
+
     def test_terminal_requires_auth_and_origin(self):
         with patch.object(app.terminal_sessions, 'handle') as handle:
             self.assertEqual(self.request('/api/terminal', {'operation':'open'}, token=False)[0],401)
