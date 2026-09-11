@@ -3,7 +3,7 @@ import json, os, re, secrets, subprocess, tempfile, time
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER = 'k3s-lab-catalog'
-CATALOG = {'nginx': {'image':'nginx:1.30.4-alpine','port':80}, 'postgres':{'image':'postgres:17-alpine','port':5432}, 'redis':{'image':'redis:7.4-alpine','port':6379}, 'kafka':{'image':'apache/kafka:4.0.0','port':9092}, 'rabbitmq':{'image':'rabbitmq:4.1-management','port':5672}, 'custom':{'image':'','port':8080}}
+CATALOG = {'nginx': {'image':'nginx:1.30.4-alpine','port':80}, 'postgres':{'image':'postgres:18.6-alpine','port':5432}, 'redis':{'image':'redis:8.10.1-alpine','port':6379}, 'kafka':{'image':'apache/kafka:4.3.1','port':9092}, 'rabbitmq':{'image':'rabbitmq:4.3.5-management','port':5672}, 'custom':{'image':'','port':8080}}
 STATEFUL = ('postgres','redis','kafka','rabbitmq')
 PROTECTED = {'kube-system','kube-public','kube-node-lease','cattle-system','cert-manager','default'}
 
@@ -31,10 +31,10 @@ def validate(config):
     image=config.get('image',CATALOG[kind]['image'])
     if not isinstance(image,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/:@-]{0,250}',image):raise ValueError('Укажите корректный образ с тегом или digest')
     if ':' not in image.rsplit('/',1)[-1] or image.endswith(':latest'):raise ValueError('Укажите версию образа вместо latest')
-    if kind=='postgres' and not re.fullmatch(r'(?:docker.io/library/)?postgres:17(?:[.\w-]*)',image):raise ValueError('Каталог PostgreSQL поддерживает ветку 17. Смена major требует отдельной миграции данных.')
-    if kind=='redis' and not re.fullmatch(r'(?:docker.io/library/)?redis:7(?:[.\w-]*)',image):raise ValueError('Каталог Redis поддерживает ветку 7.')
-    if kind=='kafka' and not re.fullmatch(r'(?:docker.io/)?apache/kafka:4\.0\.\d+',image):raise ValueError('Kafka: используйте apache/kafka:4.0.x')
-    if kind=='rabbitmq' and not re.fullmatch(r'(?:docker.io/library/)?rabbitmq:4\.1(?:\.\d+)?-management',image):raise ValueError('RabbitMQ: используйте rabbitmq:4.1-management')
+    if kind=='postgres' and not re.fullmatch(r'(?:docker.io/library/)?postgres:(?:17|18)(?:[.\w-]*)',image):raise ValueError('Каталог PostgreSQL поддерживает ветки 17 и 18. Смена major требует отдельной миграции данных.')
+    if kind=='redis' and not re.fullmatch(r'(?:docker.io/library/)?redis:(?:7|8)(?:[.\w-]*)',image):raise ValueError('Каталог Redis поддерживает ветки 7 и 8.')
+    if kind=='kafka' and not re.fullmatch(r'(?:docker.io/)?apache/kafka:4\.(?:0|3)\.\d+',image):raise ValueError('Kafka: используйте apache/kafka:4.3.x')
+    if kind=='rabbitmq' and not re.fullmatch(r'(?:docker.io/library/)?rabbitmq:4\.(?:1|3)(?:\.\d+)?-management',image):raise ValueError('RabbitMQ: используйте rabbitmq:4.3.5-management')
     if kind in ('kafka','rabbitmq') and int(config.get('port',CATALOG[kind]['port']))!=CATALOG[kind]['port']:raise ValueError('Для брокеров используется стандартный порт')
     host=config.get('host','').strip()
     if host and not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?',host):raise ValueError('URL: укажите hostname без http:// и пути')
@@ -131,10 +131,10 @@ class Apps:
         if kind=='StatefulSet':
             workload['spec']['serviceName']=name+'-headless'
             workload['spec']['volumeClaimTemplates']=[dict(metadata={'name':'data'},spec={'accessModes':['ReadWriteOnce'],'resources':{'requests':{'storage':str(c['storage'])+'Gi'}}})]
-            container['volumeMounts']=[dict(name='data',mountPath={'postgres':'/var/lib/postgresql/data','redis':'/data','kafka':'/var/lib/kafka/data','rabbitmq':'/var/lib/rabbitmq'}[c['type']])]
+            container['volumeMounts']=[dict(name='data',mountPath={'postgres':('/var/lib/postgresql' if ':18' in c['image'] else '/var/lib/postgresql/data'),'redis':'/data','kafka':'/var/lib/kafka/data','rabbitmq':'/var/lib/rabbitmq'}[c['type']])]
             headless=resource('v1','Service',name+'-headless');headless['spec']=dict(clusterIP='None',selector=selector,ports=[dict(port=c['port'],targetPort='app')]);objects.append(headless)
         if c['type']=='postgres':
-            container['env']=[dict(name='POSTGRES_PASSWORD',valueFrom={'secretKeyRef':{'name':name+'-auth','key':'password'}}),dict(name='POSTGRES_USER',value='app'),dict(name='POSTGRES_DB',value='app'),dict(name='PGDATA',value='/var/lib/postgresql/data/pgdata')]
+            container['env']=[dict(name='POSTGRES_PASSWORD',valueFrom={'secretKeyRef':{'name':name+'-auth','key':'password'}}),dict(name='POSTGRES_USER',value='app'),dict(name='POSTGRES_DB',value='app'),dict(name='PGDATA',value='/var/lib/postgresql/18/docker' if ':18' in c['image'] else '/var/lib/postgresql/data/pgdata')]
         if c['type']=='redis':container['args']=['redis-server','--appendonly','yes']
         if c['type']=='kafka':
             pod['securityContext']={'fsGroup':1000}
@@ -222,6 +222,9 @@ class Apps:
             image=data.get('image','');container=data.get('container')
             if container not in [c['name'] for c in containers]:raise ValueError('Выберите контейнер')
             validate(dict(type=ctype,image=image,name=name,namespace=ns))
+            if ctype in ('postgres','redis'):
+                old=next(c['image'] for c in containers if c['name']==container)
+                if old.rsplit(':',1)[-1].split('.')[0].split('-')[0]!=image.rsplit(':',1)[-1].split('.')[0].split('-')[0]:raise ValueError('Смена major базы требует миграции данных. Создайте новую базу и перенесите данные.')
             replicas=number(data.get('replicas',1),0,1 if ctype in STATEFUL else 10,'реплики')
             patch={'spec':{'replicas':replicas,'template':{'spec':{'containers':[{'name':container,'image':image}]}}}}
             self.kubectl(['patch',target,'-n',ns,'--type=strategic','-p',json.dumps(patch)])

@@ -1,6 +1,6 @@
 'use strict';
 let labSubmit=null,labCluster=null,appsLoading=false,labDraft=[],savedTemplates=[];
-const catalogDefaults={nginx:{image:'nginx:1.30.4-alpine',port:80,memory:128},postgres:{image:'postgres:17-alpine',port:5432,memory:256},redis:{image:'redis:7.4-alpine',port:6379,memory:128},kafka:{image:'apache/kafka:4.0.0',port:9092,memory:1024},rabbitmq:{image:'rabbitmq:4.1-management',port:5672,memory:512},custom:{image:'',port:8080,memory:128}};
+const catalogDefaults={nginx:{image:'nginx:1.30.4-alpine',port:80,memory:128},postgres:{image:'postgres:18.6-alpine',port:5432,memory:256},redis:{image:'redis:8.10.1-alpine',port:6379,memory:128},kafka:{image:'apache/kafka:4.3.1',port:9092,memory:1024},rabbitmq:{image:'rabbitmq:4.3.5-management',port:5672,memory:512},custom:{image:'',port:8080,memory:128}};
 function labField(name,label,value='',type='text',options=null){
  const wrap=element('div');const l=element('label',label);l.htmlFor='lab-'+name;const input=document.createElement(options?'select':'input');input.id='lab-'+name;input.name=name;
  if(options){for(const option of options){const o=element('option',typeof option==='string'?option:option.label);o.value=typeof option==='string'?option:option.value;input.append(o)}}else{input.type=type;input.required=true;if(type==='number')input.min='0';}

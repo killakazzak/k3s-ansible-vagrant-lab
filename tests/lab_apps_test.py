@@ -8,11 +8,14 @@ class LabTests(unittest.TestCase):
   app=lab.Apps('/tmp')
   c,k,objects,h=app.plan(dict(type='postgres',name='db',namespace='dev'))
   self.assertEqual(k,'StatefulSet')
+  self.assertEqual(c['image'],'postgres:18.6-alpine')
   workload=next(o for o in objects if o['kind']==k)
   self.assertEqual(workload['spec']['volumeClaimTemplates'][0]['spec']['resources']['requests']['storage'],'2Gi')
   env=workload['spec']['template']['spec']['containers'][0]['env']
+  self.assertEqual(workload['spec']['template']['spec']['containers'][0]['volumeMounts'][0]['mountPath'],'/var/lib/postgresql')
+  self.assertEqual(next(v['value'] for v in env if v['name']=='PGDATA'),'/var/lib/postgresql/18/docker')
   self.assertEqual(env[0]['valueFrom']['secretKeyRef']['name'],'db-auth')
-  for config in [dict(type='postgres',replicas=2),dict(namespace='kube-system'),dict(image='nginx:latest'),dict(type='postgres',image='postgres:18'),dict(name='a;rm')]:
+  for config in [dict(type='postgres',replicas=2),dict(namespace='kube-system'),dict(image='nginx:latest'),dict(type='postgres',image='postgres:19'),dict(name='a;rm')]:
    with self.assertRaises(ValueError):lab.validate(dict({'name':'a','namespace':'dev'},**config))
  def test_existing_resources_are_not_overwritten(self):
   app=lab.Apps('/tmp')
@@ -68,3 +71,11 @@ class LabTests(unittest.TestCase):
     ingress=next(o for o in objects if o['kind']=='Ingress');self.assertEqual(ingress['spec']['rules'][0]['http']['paths'][0]['backend']['service']['port']['number'],15672)
     self.assertEqual(container['env'][1]['valueFrom']['secretKeyRef']['name'],'rabbitmq-auth')
    with self.assertRaises(ValueError):lab.validate({'name':'mq','type':broker,'replicas':2})
+ def test_default_versions_and_major_upgrade_guard(self):
+  expected={'postgres':'postgres:18.6-alpine','redis':'redis:8.10.1-alpine','rabbitmq':'rabbitmq:4.3.5-management','kafka':'apache/kafka:4.3.1','nginx':'nginx:1.30.4-alpine'}
+  for kind,image in expected.items():self.assertEqual(lab.validate({'name':'app','type':kind})['image'],image)
+  for kind,old in [('postgres','postgres:17-alpine'),('redis','redis:7.4-alpine')]:
+   app=lab.Apps('/tmp');obj={'metadata':{'labels':{'lab.k3s/type':kind}},'spec':{'template':{'spec':{'containers':[{'name':kind,'image':old}]}}}}
+   with patch.object(app,'get',return_value=obj),patch.object(app,'kubectl') as cmd:
+    with self.assertRaises(ValueError):app.change({'name':'app','namespace':'dev','kind':'StatefulSet','container':kind,'image':expected[kind]},'app_update')
+    cmd.assert_not_called()

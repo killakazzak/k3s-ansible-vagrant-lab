@@ -527,7 +527,7 @@ ClusterIP, NodePort, LoadBalancer или ExternalName; Headless отмечает
 
 ### 1. Каталог
 
-Нажмите **＋ Приложение**. Доступны Nginx, PostgreSQL 17, Redis 7 и произвольный
+Нажмите **＋ Приложение**. Доступны Nginx, PostgreSQL 18.6, Redis 8.10.1 и произвольный
 образ. Укажите имя, namespace, точный тег/digest образа, порт контейнера, реплики,
 CPU в millicores и RAM в MiB. Лимиты CPU/RAM вдвое больше запросов.
 Для HTTP укажите префикс `web` (получится `web.<IP-master>.sslip.io`) или полный
@@ -577,7 +577,7 @@ Redis доступен без пароля только через ClusterIP в 
 **Версия / реплики** меняет образ выбранного контейнера и количество реплик;
 `0` останавливает приложение без удаления PVC. **Откат** возвращает предыдущую
 ревизию шаблона Pod, но не данные базы и не число реплик. Системные namespace скрыты.
-Для баз каталога откат образа запрещён, major PostgreSQL 17/Redis 7 фиксирован:
+Для баз каталога откат образа запрещён, смена major PostgreSQL и Redis запрещена:
 обновления major и восстановление данных требуют отдельной процедуры.
 История ревизий сохраняется Kubernetes (для новых приложений до 5 ревизий).
 
@@ -602,12 +602,12 @@ API недоступен, даже когда worker уже работает. Д
 
 В каталоге доступны также:
 
-- **Kafka** — `apache/kafka:4.0.0`, один StatefulSet/PVC, KRaft broker + controller,
+- **Kafka** — `apache/kafka:4.3.1`, один StatefulSet/PVC, KRaft broker + controller,
   без ZooKeeper. По умолчанию 1024 MiB RAM и 500m CPU, порт 9092.
   Bootstrap server: `<имя>.<namespace>.svc.cluster.local:9092`.
   PLAINTEXT без аутентификации, доступ внутри лабораторного кластера;
   HTTP Ingress для протокола Kafka не создаётся. Проверка — запрос метаданных брокера.
-- **RabbitMQ** — `rabbitmq:4.1-management`, один StatefulSet/PVC,
+- **RabbitMQ** — `rabbitmq:4.3.5-management`, один StatefulSet/PVC,
   512 MiB RAM и 500m CPU, AMQP 5672. Поле URL публикует веб-панель на порту 15672
   через Traefik. Логин `app`, случайный пароль в Secret `<имя>-auth`, ключ `password`.
   Получить пароль: `kubectl -n <namespace> get secret <имя>-auth -o jsonpath='{.data.password}' | base64 -d; echo`.
@@ -618,3 +618,7 @@ API недоступен, даже когда worker уже работает. Д
 Шаблоны стендов поддерживают оба приложения, пароли в шаблоны не записываются.
 Документация: [Apache Kafka](https://kafka.apache.org/40/configuration/broker-configs/),
 [RabbitMQ Management](https://www.rabbitmq.com/docs/management).
+
+PostgreSQL по умолчанию: `postgres:18.6-alpine`. PVC монтируется в `/var/lib/postgresql`,
+PGDATA — `/var/lib/postgresql/18/docker`. Старые шаблоны PostgreSQL 17 сохраняют
+прежний путь данных; переход с 17 на 18 требует отдельной миграции.
