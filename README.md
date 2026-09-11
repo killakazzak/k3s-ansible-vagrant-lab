@@ -503,3 +503,13 @@ Xterm.js 5.5.0 включён в `web/vendor` с MIT-лицензией; CDN/npm
 Команды без меню: `./cluster.sh web-start`, `./cluster.sh web-stop`,
 `./cluster.sh web-status`. Для запуска на другом порту: `./cluster.sh web-start --port 8766`.
 `./cluster.sh web` по-прежнему запускает сервер в текущем терминале до Ctrl+C.
+
+### Карта кластера
+
+Раздел «Карта кластера» показывает путь: пользователь → Ingress / IngressRoute
+Traefik → Service → Pod → Master или Worker. Выберите маршрут и нажмите элемент
+для подробностей. Связи Service/Pod берутся из EndpointSlice с учётом namespace;
+пунктирные линии показывают размещение подов на узлах.
+Внутренний api@internal Traefik отображается отдельно от Kubernetes Service.
+Обновление каждые 15 секунд; на узких экранах прокрутите карту вправо.
+Это схема конфигурации и готовности, а не трассировка реальных HTTP-запросов.

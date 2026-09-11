@@ -12,6 +12,7 @@ function drawGraph(){
  const pods=graphData.pods.filter(p=>podIds.has(p.id));
  const nodes=[...graphData.nodes].sort((a,b)=>a.role.localeCompare(b.role)||a.name.localeCompare(b.name));
  const h=Math.max(340,100+Math.max(pods.length,nodes.length)*105);svg.setAttribute('viewBox',`0 0 1280 ${h}`);svg.style.height=h+'px';
+ const defs=svgEl('defs'),marker=svgEl('marker',{id:'route-arrow',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:5,markerHeight:5,orient:'auto'});marker.append(svgEl('path',{d:'M0 0 L10 5 L0 10 Z',fill:'#74a993'}));defs.append(marker);svg.append(defs);
  const edges=svgEl('g');svg.append(edges);
  const heads=['КЛИЕНТ','INGRESS / TRAEFIK','SERVICE','PODS','УЗЛЫ КЛАСТЕРА'];
  const xs=[20,255,510,765,1020];heads.forEach((t,i)=>svg.append(svgEl('text',{x:xs[i]+8,y:30,class:'graph-heading'},t)));
@@ -28,7 +29,7 @@ function drawGraph(){
   g.addEventListener('click',show);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();show()}});
   svg.append(g);positions.set(id,{x,y});
  }
- function link(from,to,dashed=false,ready=true){const a=positions.get(from),b=positions.get(to);if(!a||!b)return;const path=svgEl('path',{d:`M${a.x+220},${a.y+38} C${a.x+245},${a.y+38} ${b.x-25},${b.y+38} ${b.x},${b.y+38}`,class:'graph-edge'+(dashed?' placement':'')+(ready?'':' unavailable')});edges.append(path);}
+ function link(from,to,dashed=false,ready=true){const a=positions.get(from),b=positions.get(to);if(!a||!b)return;const path=svgEl('path',{d:`M${a.x+220},${a.y+38} C${a.x+245},${a.y+38} ${b.x-25},${b.y+38} ${b.x},${b.y+38}`,'marker-end':dashed?'none':'url(#route-arrow)',class:'graph-edge'+(dashed?' placement':'')+(ready?'':' unavailable')});edges.append(path);}
  nodes.forEach((n,i)=>card('node:'+n.id,4,60+i*105,n.name,n.role+' · '+n.ip,'node '+(n.role==='Master'?'master':''),n.ready,`${n.role}: ${n.name} · IP ${n.ip} · ${n.ready?'Ready':'NotReady'} · На узле размещено ${graphData.pods.filter(p=>p.node===n.id).length} Pod.`));
  if(!route){card('empty',1,100,'Нет Ingress','Узлы показаны справа','',null,'Создайте Ingress или IngressRoute, чтобы увидеть путь запроса.');return;}
  card('user',0,100,'Пользователь','HTTP / HTTPS','client',null,'Клиент обращается по хосту и пути выбранного маршрута.');
