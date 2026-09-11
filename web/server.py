@@ -60,6 +60,24 @@ def visible_clusters():
         CONTEXT.root = previous
     return visible
 
+def check_cluster_network(network, exclude=None):
+    previous = active_root()
+    try:
+        for name in cluster_names():
+            if name == exclude:
+                continue
+            root = cluster_root(name)
+            CONTEXT.root = root
+            cfg = config()
+            # Deleted profiles retain settings but no longer reserve their subnet.
+            # Keep the reservation if VM state remains after an incomplete deletion.
+            if not cfg['nodes'] and not any((root / '.vagrant/machines').glob('*/*/id')):
+                continue
+            if network.overlaps(ipaddress.ip_network(cfg['network'])):
+                raise ValueError('Сеть пересекается с кластером ' + name)
+    finally:
+        CONTEXT.root = previous
+
 def next_cluster_name():
     used = set(cluster_names())
     index = 2  # The default profile is cluster1.
@@ -74,14 +92,7 @@ def new_cluster(name, cidr):
     network = ipaddress.ip_network(cidr, strict=True)
     if network.version != 4 or network.prefixlen != 24 or not any(network.subnet_of(ipaddress.ip_network(n)) for n in ['10.0.0.0/8','172.16.0.0/12','192.168.0.0/16']):
         raise ValueError('Для нового профиля задайте частную IPv4-сеть /24')
-    previous = active_root()
-    try:
-        for existing in cluster_names():
-            CONTEXT.root = cluster_root(existing)
-            if network.overlaps(ipaddress.ip_network(config()['network'])):
-                raise ValueError('Сеть пересекается с кластером ' + existing)
-    finally:
-        CONTEXT.root = previous
+    check_cluster_network(network)
     folder = ROOT / '.clusters'
     folder.mkdir(exist_ok=True, mode=0o700)
     target = folder / name
@@ -241,14 +252,7 @@ def execute(job, payload):
         CONTEXT.root = root
         if payload['action'] == 'create' and payload.get('params', {}).get('network_mode') == 'new':
             proposed = ipaddress.ip_network(payload['params']['network'], strict=True)
-            try:
-                for other in cluster_names():
-                    if other == name: continue
-                    CONTEXT.root = cluster_root(other)
-                    if proposed.overlaps(ipaddress.ip_network(config()['network'])):
-                        raise ValueError('Сеть пересекается с кластером ' + other)
-            finally:
-                CONTEXT.root = root
+            check_cluster_network(proposed, exclude=name)
         p = subprocess.Popen(['ruby', 'scripts/web-action.rb'], cwd=root, env=cluster_env(root), stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         p.stdin.write(json.dumps(payload))

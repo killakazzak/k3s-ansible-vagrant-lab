@@ -182,3 +182,26 @@ class VisibleClusterTests(unittest.TestCase):
         self.assertEqual(app.active_root(), original)
         with patch.object(app, 'cluster_names', return_value=['default']), patch.object(app, 'config', return_value={'nodes':[]}):
             self.assertEqual(app.visible_clusters(), [])
+
+class NetworkReservationTests(unittest.TestCase):
+    def test_deleted_network_reusable_but_live_or_partial_profile_reserved(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cfg = {'nodes': [], 'network': '192.168.60.0/24'}
+            network = app.ipaddress.ip_network(cfg['network'])
+            previous = app.active_root()
+            with patch.object(app, 'cluster_names', return_value=['k8s-cluster3']), patch.object(app, 'cluster_root', return_value=root), patch.object(app, 'config', return_value=cfg):
+                app.check_cluster_network(network)
+                self.assertEqual(app.active_root(), previous)
+                cfg['nodes'] = [{'name':'master'}]
+                with self.assertRaisesRegex(ValueError, 'k8s-cluster3'):
+                    app.check_cluster_network(network)
+                app.check_cluster_network(network, exclude='k8s-cluster3')
+                cfg['nodes'] = []
+                vm = root / '.vagrant/machines/master/virtualbox/id'
+                vm.parent.mkdir(parents=True)
+                vm.write_text('test-vm')
+                with self.assertRaises(ValueError):
+                    app.check_cluster_network(network)
+                self.assertEqual(app.active_root(), previous)
