@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-[[ -f "$ROOT/kubeconfig" ]] || { echo 'Run ./deploy.sh first: kubeconfig is missing.' >&2; exit 1; }
+[[ -f "$ROOT/kubeconfig" ]] || { echo 'Доступ к кластеру пока не готов. Если развёртывание уже запущено, дождитесь его завершения. Иначе создайте кластер через меню или веб-интерфейс.' >&2; exit 1; }
 if [[ -x "$ROOT/.tools/kubectl" ]]; then
   exec "$ROOT/.tools/kubectl" --kubeconfig="$ROOT/kubeconfig" "$@"
 fi

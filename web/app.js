@@ -9,7 +9,17 @@ async function api(path, data) {
   const response = await fetch('/api/' + path, {method: data ? 'POST' : 'GET', headers: {'X-Lab-Token':token,'X-Lab-Cluster':selectedCluster,'Content-Type':'application/json'}, ...(data ? {body:JSON.stringify(data)} : {})});
   const result = await response.json(); if (!response.ok) throw Error(result.error); return result;
 }
-function error(message) { $('error').textContent = message; $('error').hidden = !message; }
+let deployingCluster = null;
+function error(message) {
+  const pending = /kubeconfig is missing|Доступ к кластеру пока не готов/.test(message || '');
+  const creating = deployingCluster === selectedCluster;
+  $('error').className = pending ? 'notice' : 'error';
+  $('error').setAttribute('role', pending ? 'status' : 'alert');
+  $('error').textContent = pending
+    ? (creating ? 'Кластер создаётся. Доступ появится после завершения настройки. Ход развёртывания — в журнале ниже.' : 'Кластер пока не готов к подключению. Если создание уже запущено, дождитесь завершения. Иначе нажмите «Создать / применить».')
+    : message;
+  $('error').hidden = !message;
+}
 function element(tag, text, cls) { const e=document.createElement(tag); if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e; }
 function render() {
   const ready=state.nodes.filter(n=>n.state==='Ready').length;
@@ -74,7 +84,7 @@ for(const id of ['cancel','close'])$(id).onclick=()=>$('modal').close();
 $('refresh').onclick=async()=>{await refresh();await loadLinks()};
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav').forEach(n=>n.classList.remove('active'));b.classList.add('active');if(b.dataset.view==='overview')window.scrollTo({top:0,behavior:'smooth'});else $(b.dataset.view).scrollIntoView({behavior:'smooth',block:'start'})});
 let polling=false;
-async function poll(){if(polling)return;polling=true;try{const job=await api('job');if(job){setBusy(job.state==='running');$('job-status').textContent='['+(job.cluster||'default')+'] '+(job.state==='running'?'Выполняется…':job.state==='success'?'Завершено':'Ошибка — проверьте журнал');const log=$('log');const bottom=log.scrollHeight-log.scrollTop-log.clientHeight<50;log.textContent=job.log.replace(/\x1b\[[0-9;]*m/g,'')||'Запускаем операцию…';if(bottom)log.scrollTop=log.scrollHeight;if(lastJob!==job.id+job.state){lastJob=job.id+job.state;if(job.state!=='running'){await refresh();await loadLinks()}}}}catch(e){error(e.message)}finally{polling=false}}
+async function poll(){if(polling)return;polling=true;try{const job=await api('job');if(job){deployingCluster=job.state==='running' && ['create','version','add_master','add_worker'].includes(job.action)?(job.cluster||'default'):null;setBusy(job.state==='running');$('job-status').textContent='['+(job.cluster||'default')+'] '+(job.state==='running'?'Выполняется…':job.state==='success'?'Завершено':'Ошибка — проверьте журнал');const log=$('log');const bottom=log.scrollHeight-log.scrollTop-log.clientHeight<50;log.textContent=job.log.replace(/\x1b\[[0-9;]*m/g,'')||'Запускаем операцию…';if(bottom)log.scrollTop=log.scrollHeight;if(lastJob!==job.id+job.state){lastJob=job.id+job.state;await refresh();if(job.state!=='running'){await loadLinks()}}}}catch(e){error(e.message)}finally{polling=false}}
 async function loadClusters(){
   const names=await api('clusters');
   if(!names.includes(selectedCluster))selectedCluster='default';
