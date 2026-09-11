@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import terminal_sessions
+import topology
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV = dict(os.environ)
@@ -404,10 +405,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        if path in ('/', '/app.js', '/style.css', '/vendor/xterm.js', '/vendor/xterm.css', '/vendor/addon-fit.js'):
+        if path in ('/', '/app.js', '/style.css', '/vendor/xterm.js', '/vendor/xterm.css', '/vendor/addon-fit.js', '/graph.js'):
             if self.headers.get('Host') != '127.0.0.1:' + str(self.server.server_port):
                 return self.reply(403, {'error': 'Недопустимый Host'})
-            file, mime = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/vendor/xterm.js': ('vendor/xterm.js', 'text/javascript'), '/vendor/xterm.css': ('vendor/xterm.css', 'text/css'), '/vendor/addon-fit.js': ('vendor/addon-fit.js', 'text/javascript')}[path]
+            file, mime = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/vendor/xterm.js': ('vendor/xterm.js', 'text/javascript'), '/vendor/xterm.css': ('vendor/xterm.css', 'text/css'), '/vendor/addon-fit.js': ('vendor/addon-fit.js', 'text/javascript'), '/graph.js': ('graph.js', 'text/javascript')}[path]
             return self.reply(200, (ROOT / 'web' / file).read_bytes(), mime + '; charset=utf-8')
         if not self.allowed():
             return
@@ -429,6 +430,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, visible_clusters())
             if path in ('/api/credentials/rancher', '/api/credentials/traefik'):
                 return self.reply(200, credentials(path.rsplit('/', 1)[1]))
+            if path == '/api/topology':
+                if not (active_root() / 'kubeconfig').is_file():
+                    return self.reply(409, {'error':'Карта появится после настройки кластера.'})
+                data = json.loads(capture(['./kubectl.sh', 'get', 'nodes,pods,services,ingresses.networking.k8s.io,endpointslices.discovery.k8s.io', '-A', '-o', 'json', '--request-timeout=10s'], 15))
+                warning = None
+                try:
+                    extra = json.loads(capture(['./kubectl.sh', 'get', 'ingressroutes.traefik.io', '-A', '-o', 'json', '--request-timeout=5s'], 8))
+                    data['items'].extend(extra.get('items', []))
+                except Exception:
+                    warning = 'IngressRoute Traefik недоступны; показаны стандартные Ingress.'
+                result = topology.build(data['items'])
+                result.update(updated=time.time(), warning=warning)
+                return self.reply(200, result)
             if path == '/api/status':
                 return self.reply(200, status())
             if path == '/api/links':
