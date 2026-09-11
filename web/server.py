@@ -237,8 +237,18 @@ def config():
                 and 'traefik' not in cfg['disabled_components'])
 
 
+def verify_stamp(root):
+    return [((root / name).stat().st_mtime_ns if (root / name).exists() else None) for name in ('kubeconfig','ansible/inventory.yml')]
+
+def verify_result(root):
+    try:
+        data=json.loads((root/'.cache/cluster-check.json').read_text())
+        return data if data.get('stamp')==verify_stamp(root) and (root/'kubeconfig').exists() else None
+    except (OSError,ValueError):return None
+
 def status():
     result = config()
+    result['verification'] = verify_result(active_root())
     result['reachable'] = False
     result['error'] = None
     if not result['nodes']:
@@ -364,6 +374,14 @@ def execute(job, payload):
     finally:
         with LOCK:
             job['finished'] = time.time()
+        if payload['action']=='verify' and 'root' in locals():
+            try:
+                folder=root/'.cache';folder.mkdir(exist_ok=True)
+                data=dict(state=job['state'],finished=job['finished'],duration=round(job['finished']-job['started']),stamp=verify_stamp(root))
+                fd,temp=tempfile.mkstemp(dir=folder,prefix='cluster-check-')
+                with os.fdopen(fd,'w') as out:json.dump(data,out)
+                os.replace(temp,folder/'cluster-check.json')
+            except OSError:pass
         if job['state'] == 'success':
             try:
                 record_duration(key, job['finished'] - job['started'])

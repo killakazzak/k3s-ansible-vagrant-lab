@@ -24,6 +24,7 @@ function error(message) {
 function element(tag, text, cls) { const e=document.createElement(tag); if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e; }
 let activeJob = null;
 function renderProgress() {
+  renderClusterCheck();
   const job = activeJob;
   const own = job && (job.cluster || 'default') === selectedCluster;
   const running = own && job.state === 'running';
@@ -84,7 +85,7 @@ function setBusy(value){busy=value;$('cluster-select').disabled=clusterCount===0
 async function refresh(){
   while(refreshPromise){await refreshPromise;}
   const cluster=selectedCluster;
-  const request=(async()=>{try{$('refresh').disabled=true;const result=await api('status');if(cluster!==selectedCluster)return;state=result;render();error(state.error||'')}catch(e){if(cluster===selectedCluster)error(e.message)}finally{$('refresh').disabled=false}})();
+  const request=(async()=>{try{$('refresh').disabled=true;const result=await api('status');if(cluster!==selectedCluster)return;state=result;render();renderClusterCheck();error(state.error||'')}catch(e){if(cluster===selectedCluster)error(e.message)}finally{$('refresh').disabled=false}})();
   refreshPromise=request;
   await request;
   if(refreshPromise===request)refreshPromise=null;
@@ -262,3 +263,12 @@ window.addEventListener('resize',()=>{for(const session of shellSessions.values(
 window.addEventListener('pagehide',()=>{
   for(const session of shellSessions.values())fetch('/api/terminal',{method:'POST',keepalive:true,headers:{'X-Lab-Token':token,'X-Lab-Cluster':session.cluster,'Content-Type':'application/json'},body:JSON.stringify({operation:'close',id:session.id})});
 });
+
+function renderClusterCheck(){
+ const card=$('cluster-check-card');if(!card)return;
+ const job=activeJob;const own=job&&(job.cluster||'default')===selectedCluster&&job.action==='verify';
+ const result=own?{state:job.state,finished:job.finished,duration:Math.floor((job.finished||Date.now()/1000)-job.started)}:state?.verification;
+ const status=result?.state||'unknown';card.dataset.check=status;
+ $('cluster-check-result').textContent={success:'✓ Проверка пройдена',failed:'✕ Проверка не пройдена',running:'◌ Выполняется проверка'}[status]||'Ещё не проверено';
+ $('cluster-check-time').textContent=result?(status==='running'?`Прошло ${result.duration} с · дождитесь результата`:`${new Date(result.finished*1000).toLocaleString()} · ${result.duration} с · ${status==='success'?'Повторить проверку':'Повторить · подробности в журнале'}`):'Нажмите, чтобы проверить DNS, сеть и Traefik';
+}
