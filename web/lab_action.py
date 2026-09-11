@@ -48,9 +48,15 @@ def main():
             target=kind.lower()+'/'+name
             print('TASK ['+action+' '+ns+'/'+name+']',flush=True)
             if action=='app_stop':
+                replicas=obj.get('spec',{}).get('replicas',1)
+                if replicas>0:
+                    apps.kubectl(['annotate',target,'-n',ns,'lab.k3s/replicas-before-stop='+str(replicas),'--overwrite'])
                 print(apps.kubectl(['scale',target,'-n',ns,'--replicas=0']),flush=True)
             elif obj.get('spec',{}).get('replicas',1)==0:
-                print('Пропущено: приложение остановлено (0 реплик). Для запуска измените число реплик.',flush=True)
+                replicas=int(obj['metadata'].get('annotations',{}).get('lab.k3s/replicas-before-stop','1'))
+                if replicas<1:replicas=1
+                print(apps.kubectl(['scale',target,'-n',ns,'--replicas='+str(replicas)]),flush=True)
+                print(apps.wait_rollout(kind,name,ns,300),flush=True)
             else:
                 print(apps.kubectl(['rollout','restart',target,'-n',ns]),flush=True)
                 print(apps.wait_rollout(kind,name,ns,300),flush=True)

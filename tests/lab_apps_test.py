@@ -49,14 +49,14 @@ class LabTests(unittest.TestCase):
    lab_action.main()
    self.assertEqual([c.args[0] for c in delete.call_args_list],[dict(t,delete_data=False) for t in targets])
 
- def test_bulk_stop_and_restart_keep_stopped_apps_stopped(self):
+ def test_bulk_stop_and_restart_restore_stopped_apps(self):
   import lab_action,io,json
   for action,replicas in [('app_stop',1),('app_restart',0),('app_restart',1)]:
    payload={'action':action,'params':{'apps':[dict(kind='Deployment',namespace='dev',name='web')]}}
    with patch.object(sys,'argv',['lab_action.py','/tmp']),patch.object(sys,'stdin',io.StringIO(json.dumps(payload))),patch.object(lab.Apps,'get',return_value={'metadata':{},'spec':{'replicas':replicas}}),patch.object(lab.Apps,'kubectl',return_value='OK') as cmd,patch.object(lab.Apps,'wait_rollout',return_value='Ready'):
     lab_action.main()
     if action=='app_stop':self.assertEqual(cmd.call_args.args[0],['scale','deployment/web','-n','dev','--replicas=0'])
-    elif replicas==0:cmd.assert_not_called()
+    elif replicas==0:self.assertEqual(cmd.call_args.args[0],['scale','deployment/web','-n','dev','--replicas=1'])
     else:self.assertEqual(cmd.call_args.args[0],['rollout','restart','deployment/web','-n','dev'])
 
  def test_manifest_and_validation(self):
