@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+export PATH="$PATH:/opt/vagrant/bin:/usr/local/bin"
 started_at=$SECONDS
 if [[ "${1:-}" == "--help" ]]; then
   echo 'Usage: ./deploy.sh [--verify]'
@@ -18,7 +19,7 @@ fi
 }
 command -v brew >/dev/null || { echo 'Install Homebrew first: https://brew.sh' >&2; exit 1; }
 setting() { ruby -ryaml -e 'puts YAML.load_file(ARGV[0]).fetch(ARGV[1])' "$ROOT/ansible/group_vars/all.yml" "$1"; }
-command -v vagrant >/dev/null || brew install --cask vagrant
+command -v vagrant >/dev/null || "$ROOT/scripts/install-vagrant.sh"
 command -v ansible-playbook >/dev/null || brew install ansible
 case "$(setting vm_provider)" in
   virtualbox)
