@@ -484,6 +484,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, node_utilization())
             if path == '/api/pvcs':
                 return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).pvcs())
+            if path == '/api/resources':
+                return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).resources())
             if path == '/api/apps':
                 return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).listing())
             if path == '/api/templates':

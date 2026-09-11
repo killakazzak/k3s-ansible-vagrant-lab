@@ -63,3 +63,5 @@
 .apps-bulk{display:flex;gap:8px;padding:0 24px 16px}.apps-bulk .button{font-size:11px;padding:8px 12px}.app-pick{display:flex;align-items:center;gap:8px;font-size:11px;color:#6f8778;margin:0 0 12px}.app-pick input{width:15px;height:15px;margin:0;accent-color:#478360}.app-picked{border-color:#78a68b;box-shadow:0 0 0 2px #e3f0e7}.apps-bulk [hidden]{display:none}
 
 .apps-bulk{flex-wrap:wrap}
+
+#resources .resource-toolbar>.resource-tabs{flex-wrap:wrap;width:100%;box-sizing:border-box}#resource-detail .pvc-details dd{white-space:pre-wrap;overflow-wrap:anywhere}

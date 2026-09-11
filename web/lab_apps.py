@@ -152,6 +152,31 @@ class Apps:
             configs.append(validate(config))
         return save_template(dict(name=data.get('name'),apps=configs))
 
+    def resources(self):
+        items=self.get('deployments.apps,statefulsets.apps,daemonsets.apps,jobs.batch,cronjobs.batch,services,ingresses.networking.k8s.io,configmaps')['items']
+        result=[]
+        for obj in items:
+            m=obj['metadata'];spec=obj.get('spec',{});status=obj.get('status',{});kind=obj['kind']
+            details={'Создан':m.get('creationTimestamp',''),'Метки':m.get('labels',{})}
+            summary='';state='—'
+            if kind in ('Deployment','StatefulSet','DaemonSet'):
+                desired=spec.get('replicas',1) if kind!='DaemonSet' else status.get('desiredNumberScheduled',0)
+                ready=status.get('readyReplicas',0) if kind!='DaemonSet' else status.get('numberReady',0)
+                state=f'{ready}/{desired} Ready';summary=', '.join(c['image'] for c in spec.get('template',{}).get('spec',{}).get('containers',[]))
+                details.update(Selector=spec.get('selector',{}),Образы=summary)
+            elif kind=='Service':
+                state=spec.get('type','ClusterIP');summary=spec.get('clusterIP','—');details.update(Порты=spec.get('ports',[]),Selector=spec.get('selector',{}),ExternalIP=status.get('loadBalancer',{}))
+            elif kind=='Ingress':
+                state=spec.get('ingressClassName','—');summary=', '.join(rule.get('host','*') for rule in spec.get('rules',[]));details.update(Маршруты=spec.get('rules',[]),TLS=spec.get('tls',[]))
+            elif kind=='Job':
+                state='Failed' if status.get('failed') else 'Complete' if any(c.get('type')=='Complete' and c.get('status')=='True' for c in status.get('conditions',[])) else 'Active' if status.get('active') else 'Pending';summary=str(status.get('succeeded',0))+'/'+str(spec.get('completions',1));details.update(Состояние=status)
+            elif kind=='CronJob':
+                state='Suspended' if spec.get('suspend') else 'Enabled';summary=spec.get('schedule','');details.update(Расписание=summary,Последний_запуск=status.get('lastScheduleTime','—'),Часовой_пояс=spec.get('timeZone','По умолчанию'))
+            else:
+                state='ConfigMap';summary=', '.join(sorted(set(obj.get('data',{}))|set(obj.get('binaryData',{}))));details['Ключи']=summary
+            result.append(dict(name=m['name'],namespace=m.get('namespace',''),kind=kind,state=state,summary=summary,details=details))
+        return result
+
     def listing(self):
         items=self.get('deployments.apps,statefulsets.apps')['items'];out=[]
         routes=self.get('ingress')['items']
