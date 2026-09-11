@@ -1,6 +1,25 @@
 """Build a routing map from Kubernetes objects; never return pod env or secrets."""
 def build(items):
     nodes, services, pods, routes, endpoints = [], [], [], [], []
+    by_uid = {o.get('metadata', {}).get('uid'): o for o in items if o.get('metadata', {}).get('uid')}
+    def ownership(obj):
+        chain, seen = [], set()
+        current = obj
+        while current:
+            refs = current.get('metadata', {}).get('ownerReferences', [])
+            owner = next((r for r in refs if r.get('controller') is True), None)
+            if not owner:
+                break
+            uid = owner.get('uid')
+            if uid in seen:
+                break
+            seen.add(uid)
+            chain.append(dict(kind=owner.get('kind', 'Unknown'), name=owner.get('name', ''), resolved=uid in by_uid))
+            current = by_uid.get(uid)
+        if chain:
+            return dict(kind=chain[-1]['kind'], name=chain[-1]['name'], chain=chain)
+        static = 'kubernetes.io/config.mirror' in obj.get('metadata', {}).get('annotations', {})
+        return dict(kind='StaticPod' if static else 'Pod', name=obj.get('metadata', {}).get('name', ''), chain=[])
     for obj in items:
         kind=obj.get('kind');meta=obj.get('metadata',{});spec=obj.get('spec',{});status=obj.get('status',{})
         name=meta.get('name','');ns=meta.get('namespace','default');key=ns+'/'+name
@@ -8,9 +27,9 @@ def build(items):
             master=any(k in meta.get('labels',{}) for k in ('node-role.kubernetes.io/control-plane','node-role.kubernetes.io/master'))
             nodes.append(dict(id=name,name=name,role='Master' if master else 'Worker',ready=any(c.get('type')=='Ready' and c.get('status')=='True' for c in status.get('conditions',[])),ip=next((a['address'] for a in status.get('addresses',[]) if a['type']=='InternalIP'),'')))
         elif kind=='Pod':
-            pods.append(dict(id=key,name=name,namespace=ns,node=spec.get('nodeName'),ip=status.get('podIP',''),phase=status.get('phase','Unknown'),ready=any(c.get('type')=='Ready' and c.get('status')=='True' for c in status.get('conditions',[]))))
+            pods.append(dict(id=key,name=name,namespace=ns,node=spec.get('nodeName'),workload=ownership(obj),ip=status.get('podIP',''),phase=status.get('phase','Unknown'),ready=any(c.get('type')=='Ready' and c.get('status')=='True' for c in status.get('conditions',[]))))
         elif kind=='Service':
-            services.append(dict(id=key,name=name,namespace=ns,type=spec.get('type','ClusterIP'),ip=spec.get('clusterIP',''),external=spec.get('externalName',''),ports=spec.get('ports',[])))
+            services.append(dict(id=key,name=name,namespace=ns,type=spec.get('type','ClusterIP'),headless=spec.get('clusterIP')=='None',ip=spec.get('clusterIP',''),external=spec.get('externalName',''),ports=spec.get('ports',[])))
         elif kind=='EndpointSlice':
             service=meta.get('labels',{}).get('kubernetes.io/service-name')
             if not service:continue

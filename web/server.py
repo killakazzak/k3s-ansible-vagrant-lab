@@ -433,7 +433,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/topology':
                 if not (active_root() / 'kubeconfig').is_file():
                     return self.reply(409, {'error':'Карта появится после настройки кластера.'})
-                data = json.loads(capture(['./kubectl.sh', 'get', 'nodes,pods,services,ingresses.networking.k8s.io,endpointslices.discovery.k8s.io', '-A', '-o', 'json', '--request-timeout=10s'], 15))
+                data = json.loads(capture(['./kubectl.sh', 'get', 'nodes,pods,services,ingresses.networking.k8s.io,endpointslices.discovery.k8s.io,replicasets.apps,deployments.apps,daemonsets.apps,statefulsets.apps,jobs.batch,cronjobs.batch', '-A', '-o', 'json', '--request-timeout=10s'], 15))
                 warning = None
                 try:
                     extra = json.loads(capture(['./kubectl.sh', 'get', 'ingressroutes.traefik.io', '-A', '-o', 'json', '--request-timeout=5s'], 8))

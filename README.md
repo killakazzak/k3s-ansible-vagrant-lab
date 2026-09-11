@@ -513,3 +513,8 @@ Traefik → Service → Pod → Master или Worker. Выберите марш�
 Внутренний api@internal Traefik отображается отдельно от Kubernetes Service.
 Обновление каждые 15 секунд; на узких экранах прокрутите карту вправо.
 Это схема конфигурации и готовности, а не трассировка реальных HTTP-запросов.
+
+Карта показывает владельца Pod по ownerReferences: Deployment (через ReplicaSet),
+DaemonSet, StatefulSet, Job/CronJob и другие контроллеры. Pod без контроллера
+и статический Pod отмечаются отдельно. В описании маршрута указан тип Service:
+ClusterIP, NodePort, LoadBalancer или ExternalName; Headless отмечается дополнительно.

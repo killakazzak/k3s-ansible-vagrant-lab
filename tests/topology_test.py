@@ -20,3 +20,20 @@ class TopologyTests(unittest.TestCase):
  def test_internal_traefik_is_not_service(self):
   r=build([{'kind':'IngressRoute','metadata':{'name':'dashboard'},'spec':{'routes':[{'match':'Host(`test`)','services':[{'name':'api@internal','kind':'TraefikService'}]}]}}])['routes'][0]
   self.assertIsNone(r['service']);self.assertEqual(r['internal'],'api@internal')
+
+class OwnershipTests(unittest.TestCase):
+ def test_owner_chains_and_service_types(self):
+  def obj(kind,name,uid,owner=None):
+   meta={'name':name,'namespace':'demo','uid':uid}
+   if owner:meta['ownerReferences']=[dict(kind=owner[0],name=owner[1],uid=owner[2],controller=True)]
+   return {'kind':kind,'metadata':meta}
+  items=[obj('Deployment','web','d'),obj('ReplicaSet','web-123','r',('Deployment','web','d')),obj('Pod','web-pod','p',('ReplicaSet','web-123','r')),
+   obj('DaemonSet','agent','ds'),obj('Pod','agent-pod','p2',('DaemonSet','agent','ds')),
+   obj('CronJob','backup','cj'),obj('Job','backup-1','j',('CronJob','backup','cj')),obj('Pod','backup-pod','p3',('Job','backup-1','j')),obj('Pod','manual','p4'),
+   {'kind':'Service','metadata':{'name':'headless'},'spec':{'type':'ClusterIP','clusterIP':'None'}},
+   {'kind':'Service','metadata':{'name':'lb'},'spec':{'type':'LoadBalancer'}}]
+  data=build(items)
+  self.assertEqual([p['workload']['kind'] for p in data['pods']],['Deployment','DaemonSet','CronJob','Pod'])
+  self.assertEqual([c['kind'] for c in data['pods'][0]['workload']['chain']],['ReplicaSet','Deployment'])
+  self.assertTrue(data['services'][0]['headless'])
+  self.assertEqual(data['services'][1]['type'],'LoadBalancer')

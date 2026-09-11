@@ -22,6 +22,8 @@ function routeURLs(route){
   return (route.tls?'https://':'http://')+host+path;
  });
 }
+function workloadLabel(p){const w=p.workload;return w?`${w.kind} / ${w.name}`:'Владелец неизвестен';}
+function serviceType(s){return s.type+(s.headless?' · Headless':'');}
 function renderRouteInfo(route,svc,pods){
  const box=$('graph-route-info');box.replaceChildren();
  if(!route)return;
@@ -39,6 +41,8 @@ function renderRouteInfo(route,svc,pods){
  const item=(label,value)=>{list.append(add('dt',label),add('dd',value));};
  item('Ingress',`${route.namespace}/${route.name} · ${route.controller}`);
  item('Service',svc?`${svc.id} · порт ${typeof route.port==='object'?JSON.stringify(route.port):route.port}`:route.internal||'Не найден');
+ if(svc)item('Тип Service',serviceType(svc)+' — '+({ClusterIP:svc.headless?'DNS указывает на endpoints без виртуального IP':'внутренний виртуальный IP',NodePort:'доступ через порт на узлах',LoadBalancer:'доступ через балансировщик',ExternalName:'DNS-псевдоним внешнего адреса'}[svc.type]||'тип из Kubernetes'));
+ item('Рабочая нагрузка',pods.length?[...new Set(pods.map(workloadLabel))].join('\n'):route.internal?'Внутренний обработчик Traefik':'Поды не найдены');
  if(svc)item('Внутри кластера',svc.external||`${svc.name}.${svc.namespace}.svc.cluster.local · ${svc.ip}`);
  item('Pod → узел',pods.length?pods.map(p=>`${p.name} → ${p.node||'ещё не назначен'}`).join('\n'):route.internal?'Обрабатывается внутри контроллера Traefik':'Нет привязанных Pod endpoints');
  box.append(list);
@@ -91,9 +95,9 @@ function drawGraph(){
  card('user',0,100,'Пользователь','HTTP / HTTPS','client',null,'Клиент обращается по хосту и пути выбранного маршрута.');
  card('ingress',1,100,route.name,route.kind+' · '+route.namespace,'ingress',null,`${route.kind}: ${route.namespace}/${route.name} · ${route.host} ${route.path} · Контроллер: ${route.controller} · Порт backend: ${JSON.stringify(route.port)}`);
  link('user','ingress');
- card('svc',2,100,svc?svc.name:route.internal||'Service не найден',svc?svc.type+' · '+svc.ip:route.internal?'Внутренний сервис Traefik':'Нет backend Service','service',svc?null:!!route.internal,svc?`Service ${svc.id} · ${svc.type} · ${svc.external||svc.ip} · Порты: ${svc.ports.map(p=>p.port+' → '+p.targetPort).join(', ')} · Endpoints: ${endpoints.length}`:route.internal?'Внутренний обработчик Traefik '+route.internal+', не Kubernetes Service.':'Backend Service не найден или тип backend не поддерживается.');
+ card('svc',2,100,svc?svc.name:route.internal||'Service не найден',svc?serviceType(svc)+' · '+svc.ip:route.internal?'Внутренний сервис Traefik':'Нет backend Service','service',svc?null:!!route.internal,svc?`Service ${svc.id} · ${serviceType(svc)} · ${svc.external||svc.ip} · Порты: ${svc.ports.map(p=>p.port+' → '+p.targetPort).join(', ')} · Endpoints: ${endpoints.length}`:route.internal?'Внутренний обработчик Traefik '+route.internal+', не Kubernetes Service.':'Backend Service не найден или тип backend не поддерживается.');
  link('ingress','svc',false,!!svc||!!route.internal);
- pods.forEach((p,i)=>{const ep=endpoints.filter(e=>e.pod===p.id);const ready=ep.some(e=>e.ready!==false);card('pod:'+p.id,3,60+i*105,p.name,p.phase+' · '+(p.ready?'Ready':'NotReady'),'pod',p.ready,`Pod ${p.id} · IP ${p.ip||'не назначен'} · ${p.phase} · Узел ${p.node||'ещё не назначен'} · Endpoint: ${ready?'доступен или ready не указан':'not ready'}`);link('svc','pod:'+p.id,false,ready);link('pod:'+p.id,'node:'+p.node,true)});
+ pods.forEach((p,i)=>{const ep=endpoints.filter(e=>e.pod===p.id);const ready=ep.some(e=>e.ready!==false);card('pod:'+p.id,3,60+i*105,p.name,(p.workload?p.workload.kind:'Pod')+' · '+(p.ready?'Ready':p.phase),'pod',p.ready,`Pod ${p.id} · Владелец: ${workloadLabel(p)} · Цепочка: ${(p.workload?.chain||[]).map(o=>o.kind+"/"+o.name).join(" → ")||"без контроллера"} · IP ${p.ip||'не назначен'} · ${p.phase} · Узел ${p.node||'ещё не назначен'} · Endpoint: ${ready?'доступен или ready не указан':'not ready'}`);link('svc','pod:'+p.id,false,ready);link('pod:'+p.id,'node:'+p.node,true)});
  if(!pods.length){card('no-pod',3,100,route.internal?'Внутри Traefik':'Нет Pod endpoints',svc&&svc.external?svc.external:'Нажмите для подробностей','pod',null,endpoints.length?'У EndpointSlice нет targetRef на известный Pod. Адреса: '+endpoints.flatMap(e=>e.addresses).join(', '):route.internal?'Этот маршрут обслуживает сам контроллер Traefik.':'У Service пока нет EndpointSlice с привязкой к Pod.');link('svc','no-pod',false,false)}
  syncGraphMotion();
 }
