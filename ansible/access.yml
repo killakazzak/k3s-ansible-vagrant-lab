@@ -1,0 +1,20 @@
+---
+- name: Show cluster web interfaces
+  hosts: "{{ groups['server'][0] }}"
+  gather_facts: false
+  tasks:
+    - name: Rancher access
+      ansible.builtin.debug:
+        msg:
+          - "Rancher: https://{{ rancher_hostname }}"
+          - "Login: admin"
+          - "Initial password: ./kubectl.sh -n cattle-system get secret bootstrap-secret -o jsonpath='{.data.bootstrapPassword}' | base64 -d; echo"
+      when: rancher_enabled | bool
+    - name: Traefik access
+      ansible.builtin.debug:
+        msg:
+          - "Traefik: https://{{ traefik_dashboard_hostname }}/dashboard/"
+          - "Login: ./kubectl.sh -n kube-system get secret traefik-dashboard-auth -o jsonpath='{.data.username}' | base64 -d; echo"
+          - "Password: ./kubectl.sh -n kube-system get secret traefik-dashboard-auth -o jsonpath='{.data.password}' | base64 -d; echo"
+          - "Lab HTTPS certificates require a browser trust exception."
+      when: traefik_dashboard_enabled | bool and 'traefik' not in disabled_components

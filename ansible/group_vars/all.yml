@@ -75,3 +75,8 @@ menu_worker_ip_start: 21
 # Official Apple Silicon installer included in vendor/vagrant (no separate download).
 vagrant_version: '2.4.9'
 vagrant_installer_sha256: 8de08bd435ef8ae0fc5fbd6acefa9c68e62fb898c5ae0fbdacd26853bea9d4d6
+
+# Dashboard is protected by HTTPS and a generated Kubernetes BasicAuth secret.
+traefik_dashboard_enabled: true
+traefik_dashboard_hostname: "traefik.{{ hostvars[server_node].ansible_host }}.sslip.io"
+traefik_dashboard_username: admin

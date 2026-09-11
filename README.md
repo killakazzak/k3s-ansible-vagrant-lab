@@ -211,7 +211,7 @@ vagrant ssh k3s-worker1 -c 'sudo journalctl -u k3s-agent -n 100 --no-pager'
 - [Документация Traefik](https://doc.traefik.io/traefik/)
 - [Traefik в k3s](https://docs.k3s.io/networking/networking-services#traefik-ingress-controller)
 
-Traefik обслуживает Ingress на портах 80/443, в том числе Rancher. Его административный dashboard наружу не публикуется; произвольный URL worker без подходящего Ingress может вернуть 404.
+Traefik обслуживает Ingress на портах 80/443, в том числе Rancher. Его административный dashboard доступен по HTTPS с BasicAuth (см. ниже); произвольный URL worker без подходящего Ingress может вернуть 404.
 
 Проверено обновлённое развёртывание: миграция действующего master с SQLite на etcd, Rancher `2.15.1` Ready, сертификат для настроенного hostname, HTTPS `/ping`, DNS и межузловая сеть. Полный повторный `up --verify` завершился за 57 секунд с готовыми VM и кэшем. Добавление master проверено тестами меню и рендерингом конфигурации; присоединение дополнительной VM в текущем окружении не выполнялось — оставлены 1 master и 2 workers.
 
@@ -258,3 +258,39 @@ Traefik обслуживает Ingress на портах 80/443, в том чи�
 После установки развёртывание продолжается автоматически. Homebrew по-прежнему нужен для установки отсутствующего Ansible; VirtualBox нужно установить отдельно. Установка самого Vagrant из включённого DMG не требует Homebrew. Этот дистрибутив не подходит для Intel Mac.
 
 При несовпадении SHA256 или подписи установка прекращается. Версия и ожидаемая SHA256 вынесены в `ansible/group_vars/all.yml`; происхождение, официальный список контрольных сумм и лицензия — в `vendor/vagrant`.
+
+
+## Автоустановка Ansible и ссылки после развёртывания
+
+`./cluster.sh` → пункт 1 или `./cluster.sh up --verify` автоматически проверяет
+`ansible` и `ansible-playbook`. Если они отсутствуют, устанавливает Ansible через
+Homebrew. Уже установленная версия сохраняется. Homebrew должен быть установлен
+заранее. Отдельно проверить/установить: `./scripts/install-ansible.sh`.
+
+В конце успешного развёртывания выводятся адреса с учётом текущего IP первого
+master и настроек hostname. Для стандартной сети:
+
+- [Rancher](https://rancher.192.168.58.11.sslip.io) — логин `admin`.
+- [Traefik Dashboard](https://traefik.192.168.58.11.sslip.io/dashboard/) — логин `admin` при первом развёртывании.
+
+Получить пароли локально:
+
+```bash
+./kubectl.sh -n cattle-system get secret bootstrap-secret -o jsonpath='{.data.bootstrapPassword}' | base64 -d; echo
+./kubectl.sh -n kube-system get secret traefik-dashboard-auth -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+Traefik использует HTTPS и отдельный случайный пароль, который сохраняется в
+Kubernetes Secret и не меняется при повторном применении. Пароль не попадает в
+Git или вывод Ansible. Браузер покажет предупреждение о локальном TLS-сертификате.
+Доступ требует подключения Mac к сети VM и разрешения имени через sslip.io.
+Путь `/dashboard/` требует завершающий слеш.
+
+Настройки: `traefik_dashboard_enabled`, `traefik_dashboard_hostname`,
+`traefik_dashboard_username` в `ansible/group_vars/all.yml`. Имя пользователя
+задаётся при создании Secret; изменение переменной не меняет существующие
+учётные данные. Отключение dashboard удаляет его маршрут при следующем применении.
+Повторно вывести ссылки: `ansible-playbook ansible/access.yml`.
+
+Маршрутизация настроена через [официальный механизм Traefik API/Dashboard](https://doc.traefik.io/traefik/operations/dashboard/)
+с `api@internal`; анонимный доступ проверяется на ответ 401.

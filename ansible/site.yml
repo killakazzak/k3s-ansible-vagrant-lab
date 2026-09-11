@@ -352,3 +352,5 @@
         var: nodes.stdout_lines
 
 - import_playbook: rancher.yml
+
+- import_playbook: traefik-dashboard.yml

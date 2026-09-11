@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
-export PATH="$PATH:/opt/vagrant/bin:/usr/local/bin"
+export PATH="$PATH:/opt/homebrew/bin:/opt/vagrant/bin:/usr/local/bin"
 started_at=$SECONDS
 if [[ "${1:-}" == "--help" ]]; then
   echo 'Usage: ./deploy.sh [--verify]'
@@ -20,7 +20,7 @@ fi
 command -v brew >/dev/null || { echo 'Install Homebrew first: https://brew.sh' >&2; exit 1; }
 setting() { ruby -ryaml -e 'puts YAML.load_file(ARGV[0]).fetch(ARGV[1])' "$ROOT/ansible/group_vars/all.yml" "$1"; }
 command -v vagrant >/dev/null || "$ROOT/scripts/install-vagrant.sh"
-command -v ansible-playbook >/dev/null || brew install ansible
+"$ROOT/scripts/install-ansible.sh"
 case "$(setting vm_provider)" in
   virtualbox)
     command -v VBoxManage >/dev/null || { echo 'Install VirtualBox for Apple Silicon: https://www.virtualbox.org/wiki/Downloads' >&2; exit 1; }
@@ -69,5 +69,7 @@ if [[ "${1:-}" == "--verify" ]]; then
 fi
 "$ROOT/kubectl.sh" get nodes -o wide
 echo 'Cluster is ready. Use ./kubectl.sh or export KUBECONFIG="$PWD/kubeconfig".'
+
+ansible-playbook ansible/access.yml
 
 printf "Completed in %s seconds.\n" "$((SECONDS-started_at))"

@@ -1,0 +1,108 @@
+---
+- name: Configure authenticated Traefik dashboard
+  hosts: "{{ groups['server'][0] }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Configure dashboard
+      when: traefik_dashboard_enabled | bool and 'traefik' not in disabled_components
+      block:
+        - name: Validate dashboard settings
+          ansible.builtin.assert:
+            that:
+              - "'servicelb' not in disabled_components"
+              - traefik_dashboard_username is match('^[a-zA-Z0-9_-]+$')
+              - traefik_dashboard_hostname is match('^[a-zA-Z0-9][a-zA-Z0-9.-]+$')
+        - name: Read existing dashboard credentials
+          ansible.builtin.command: k3s kubectl -n kube-system get secret traefik-dashboard-auth --ignore-not-found -o json
+          register: dashboard_secret
+          changed_when: false
+          no_log: true
+        - name: Create credentials on first deployment
+          when: dashboard_secret.stdout | trim == ''
+          block:
+            - name: Generate dashboard password
+              ansible.builtin.command: openssl rand -hex 24
+              register: dashboard_password
+              changed_when: false
+              no_log: true
+            - name: Hash dashboard password
+              ansible.builtin.command: openssl passwd -apr1 -stdin
+              args:
+                stdin: "{{ dashboard_password.stdout }}"
+              register: dashboard_hash
+              changed_when: false
+              no_log: true
+            - name: Store private dashboard credentials
+              ansible.builtin.command: k3s kubectl apply -f -
+              args:
+                stdin: |
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: traefik-dashboard-auth
+                    namespace: kube-system
+                  type: Opaque
+                  stringData:
+                    username: {{ traefik_dashboard_username | to_json }}
+                    password: {{ dashboard_password.stdout | to_json }}
+                    users: {{ (traefik_dashboard_username + ':' + dashboard_hash.stdout) | to_json }}
+              no_log: true
+        - name: Apply HTTPS route with BasicAuth
+          ansible.builtin.command: k3s kubectl apply -f -
+          args:
+            stdin: |
+              apiVersion: traefik.io/v1alpha1
+              kind: Middleware
+              metadata:
+                name: lab-dashboard-auth
+                namespace: kube-system
+              spec:
+                basicAuth:
+                  secret: traefik-dashboard-auth
+              ---
+              apiVersion: traefik.io/v1alpha1
+              kind: IngressRoute
+              metadata:
+                name: lab-dashboard
+                namespace: kube-system
+              spec:
+                entryPoints: [websecure]
+                routes:
+                  - match: Host(`{{ traefik_dashboard_hostname }}`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))
+                    kind: Rule
+                    middlewares:
+                      - name: lab-dashboard-auth
+                    services:
+                      - name: api@internal
+                        kind: TraefikService
+                tls: {}
+          register: dashboard_route
+          changed_when: "'unchanged' not in dashboard_route.stdout"
+        - name: Read dashboard login for verification
+          ansible.builtin.command: k3s kubectl -n kube-system get secret traefik-dashboard-auth -o json
+          register: dashboard_login
+          changed_when: false
+          no_log: true
+        - name: Verify anonymous access is denied
+          ansible.builtin.uri:
+            url: "https://{{ traefik_dashboard_hostname }}/dashboard/"
+            validate_certs: false
+            status_code: 401
+          register: dashboard_anonymous
+          retries: 30
+          delay: 3
+          until: dashboard_anonymous.status | default(0) == 401
+        - name: Verify dashboard with credentials
+          ansible.builtin.uri:
+            url: "https://{{ traefik_dashboard_hostname }}/dashboard/"
+            validate_certs: false
+            url_username: "{{ (dashboard_login.stdout | from_json).data.username | b64decode }}"
+            url_password: "{{ (dashboard_login.stdout | from_json).data.password | b64decode }}"
+            force_basic_auth: true
+          no_log: true
+    - name: Remove dashboard route when disabled
+      ansible.builtin.command: k3s kubectl -n kube-system delete ingressroute lab-dashboard --ignore-not-found
+      when: not (traefik_dashboard_enabled | bool) and 'traefik' not in disabled_components
+      register: dashboard_removed
+      changed_when: "'deleted' in dashboard_removed.stdout"
