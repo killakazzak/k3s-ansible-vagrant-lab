@@ -189,30 +189,77 @@ $('download-kubeconfig').onclick=async()=>{
   } catch(e){error(e.message)} finally{button.disabled=false}
 };
 
-const commandResults = new Map();
-let commandPending = false;
+const shellSessions = new Map();
+let openingShell = false;
 function renderKubectl() {
   $('kubectl-cluster').textContent = selectedCluster === 'default' ? 'k8s-cluster1' : selectedCluster;
-  const result = commandResults.get(selectedCluster);
-  $('kubectl-output').textContent = result ? result.output : 'Введите команду для выбранного кластера. Kubeconfig подключится автоматически.';
-  $('kubectl-status').textContent = result ? result.status : '';
+  const session = shellSessions.get(selectedCluster);
+  for (const [name, item] of shellSessions) item.element.hidden = name !== selectedCluster;
+  $('shell-status').textContent = session ? session.status : 'Не подключён';
+  $('shell-open').disabled = openingShell || !!session;
+  $('shell-close').disabled = !session;
+  if (session) fitShell(session);
 }
-$('cluster-select').addEventListener('change', renderKubectl);
-$('kubectl-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  if (commandPending) return;
-  const cluster = selectedCluster;
-  const command = $('kubectl-command').value.trim();
-  if (!command) return;
-  commandPending = true; $('kubectl-run').disabled = true;
-  commandResults.set(cluster, {output: '$ ' + command + '\nВыполняется…', status: 'Выполняется…'});
-  renderKubectl();
-  try {
-    const result = await api('kubectl', {command});
-    commandResults.set(cluster, {output: '$ ' + command + '\n' + (result.output || 'Команда выполнена без вывода.'), status: result.exit_code === 0 ? 'Завершено' : 'Код завершения: ' + result.exit_code});
-  } catch (e) {
-    commandResults.set(cluster, {output: e.message, status: 'Команда не выполнена'});
-  } finally {
-    commandPending = false; $('kubectl-run').disabled = false; renderKubectl();
+async function terminalApi(cluster, data) {
+  const response = await fetch('/api/terminal', {method:'POST', headers:{'X-Lab-Token':token,'X-Lab-Cluster':cluster,'Content-Type':'application/json'},body:JSON.stringify(data)});
+  const result = await response.json();
+  if (!response.ok) throw Error(result.error);
+  return result;
+}
+function fitShell(session) {
+  if (session.element.hidden) return;
+  const cols = Math.max(20, Math.min(400, Math.floor((session.element.clientWidth - 20) / 8.4)));
+  if (session.term.cols !== cols) {
+    session.term.resize(cols, 24);
+    terminalApi(session.cluster, {operation:'resize',id:session.id,cols,rows:24}).catch(()=>{});
   }
+}
+async function pollShell(session) {
+  while (!session.closed) {
+    try {
+      const result = await terminalApi(session.cluster, {operation:'poll',id:session.id,offset:session.offset});
+      if (session.closed) return;
+      session.offset = result.offset;
+      if (result.truncated) session.term.writeln('\r\n[Часть старого вывода пропущена]');
+      const bytes = Uint8Array.from(atob(result.output), c=>c.charCodeAt(0));
+      if (bytes.length) await new Promise(resolve=>session.term.write(bytes,resolve));
+      if (result.finished) { session.status='Сессия завершена'; renderKubectl(); return; }
+    } catch (e) {
+      session.status=e.message; renderKubectl();
+      await new Promise(resolve=>setTimeout(resolve,2000));
+    }
+  }
+}
+$('shell-open').onclick=async()=>{
+  const cluster=selectedCluster;
+  openingShell=true;renderKubectl();
+  try {
+    const result=await terminalApi(cluster,{operation:'open'});
+    const element=document.createElement('div');element.className='shell-screen';$('shell-host').append(element);
+    const term=new Terminal({cursorBlink:true,fontSize:14,fontFamily:'Menlo, monospace',rows:24,scrollback:3000,theme:{background:'#142e31',foreground:'#dbece7'}});
+    term.open(element);
+    const session={id:result.id,cluster,element,term,offset:0,status:'Подключён',closed:false,queue:Promise.resolve()};
+    shellSessions.set(cluster,session);
+    term.onData(data=>{
+      for (let i=0;i<data.length;i+=512) {
+        const input=data.slice(i,i+512);
+        session.queue=session.queue.then(()=>terminalApi(cluster,{operation:'input',id:session.id,input})).catch(e=>{session.status=e.message;renderKubectl()});
+      }
+    });
+    term.attachCustomKeyEventHandler(e=>!(e.shiftKey && e.key==='Tab'));
+    renderKubectl();term.focus();pollShell(session);
+  } catch(e){error(e.message)} finally{openingShell=false;renderKubectl()}
+};
+$('shell-close').onclick=async()=>{
+  const cluster=selectedCluster, session=shellSessions.get(cluster);
+  if (!session) return;
+  try {
+    await terminalApi(cluster,{operation:'close',id:session.id});
+    session.closed=true;session.term.dispose();session.element.remove();shellSessions.delete(cluster);renderKubectl();
+  }catch(e){error(e.message)}
+};
+$('cluster-select').addEventListener('change',renderKubectl);
+window.addEventListener('resize',()=>{for(const session of shellSessions.values())fitShell(session)});
+window.addEventListener('pagehide',()=>{
+  for(const session of shellSessions.values())fetch('/api/terminal',{method:'POST',keepalive:true,headers:{'X-Lab-Token':token,'X-Lab-Cluster':session.cluster,'Content-Type':'application/json'},body:JSON.stringify({operation:'close',id:session.id})});
 });

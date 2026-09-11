@@ -27,6 +27,12 @@ class ConsoleTests(unittest.TestCase):
         try:
             with urlopen(req) as response: return response.status, response.read()
         except HTTPError as e: return e.code, e.read()
+    def test_terminal_requires_auth_and_origin(self):
+        with patch.object(app.terminal_sessions, 'handle') as handle:
+            self.assertEqual(self.request('/api/terminal', {'operation':'open'}, token=False)[0],401)
+            self.assertEqual(self.request('/api/terminal', {'operation':'open'}, headers={'Origin':'https://example.org'})[0],403)
+            handle.assert_not_called()
+
     def test_kubectl_auth_and_validation(self):
         self.assertEqual(self.request('/api/kubectl', {'command':'kubectl get nodes'}, token=False)[0], 401)
         for command in ['sh whoami', 'kubectl get nodes --kubeconfig=/tmp/other', 'kubectl get nodes -shttp://other', 'kubectl get pods | cat', 'kubectl logs pod -f', 'kubectl get pods -o=jsonpath-file=/tmp/file']:
@@ -212,6 +218,8 @@ class RepeatedLaunchTests(unittest.TestCase):
             root = Path(folder)
             (root / 'web').mkdir()
             shutil.copy(Path(app.__file__), root / 'web/server.py')
+            for name in ('terminal_sessions.py', 'terminal_child.py'):
+                shutil.copy(Path(app.__file__).with_name(name), root / 'web' / name)
             command = [sys.executable, str(root / 'web/server.py'), '--port', '0']
             first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:

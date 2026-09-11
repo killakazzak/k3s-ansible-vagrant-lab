@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Loopback-only cluster console; standard library, no pip dependencies."""
+import sys
 import argparse
 import re
 import shutil
@@ -20,6 +21,9 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import terminal_sessions
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV = dict(os.environ)
@@ -373,7 +377,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
-        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         self.end_headers()
         self.wfile.write(body)
 
@@ -398,10 +402,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        if path in ('/', '/app.js', '/style.css'):
+        if path in ('/', '/app.js', '/style.css', '/vendor/xterm.js', '/vendor/xterm.css'):
             if self.headers.get('Host') != '127.0.0.1:' + str(self.server.server_port):
                 return self.reply(403, {'error': 'Недопустимый Host'})
-            file, mime = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}[path]
+            file, mime = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/vendor/xterm.js': ('vendor/xterm.js', 'text/javascript'), '/vendor/xterm.css': ('vendor/xterm.css', 'text/css')}[path]
             return self.reply(200, (ROOT / 'web' / file).read_bytes(), mime + '; charset=utf-8')
         if not self.allowed():
             return
@@ -439,7 +443,7 @@ class Handler(BaseHTTPRequestHandler):
         global JOB
         if not self.allowed():
             return
-        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl'):
+        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal'):
             return self.reply(404, {'error': 'Не найдено'})
         try:
             length = int(self.headers.get('Content-Length', 0))
@@ -448,6 +452,10 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError('Некорректный запрос')
+            if self.path == '/api/terminal':
+                env = cluster_env(active_root())
+                env['PATH'] = str(ROOT / '.tools') + ':' + env['PATH']
+                return self.reply(200, terminal_sessions.handle(data, active_root(), env))
             if self.path == '/api/kubectl':
                 return self.reply(200, run_kubectl(data.get('command')))
             if self.path == '/api/clusters':
@@ -474,7 +482,7 @@ class Handler(BaseHTTPRequestHandler):
                 JOB = dict(cluster=self.headers.get('X-Lab-Cluster', 'default'), id=secrets.token_hex(8), action=action, state='running', log='', started=time.time())
                 threading.Thread(target=execute, args=(JOB, data), daemon=True).start()
             self.reply(202, {'ok': True})
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, OSError) as e:
             self.reply(400, {'error': str(e)})
 
 
@@ -511,7 +519,12 @@ if __name__ == '__main__':
     instance_lock.flush()
     print(f'\nK3s Lab → {url}', flush=True)
     print('Оставьте терминал открытым. Ctrl+C останавливает веб-сервер; дождитесь окончания операций перед выходом.', flush=True)
+    import signal
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
+        pass
+    finally:
+        terminal_sessions.cleanup()
         server.server_close()
