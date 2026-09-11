@@ -21,6 +21,30 @@ function error(message) {
   $('error').hidden = !message;
 }
 function element(tag, text, cls) { const e=document.createElement(tag); if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e; }
+let activeJob = null;
+function renderProgress() {
+  const job = activeJob;
+  const own = job && (job.cluster || 'default') === selectedCluster;
+  const running = own && job.state === 'running';
+  const panel = $('operation-progress');
+  panel.hidden = !own;
+  if (!own) return;
+  const labels = {create:'Кластер создаётся',version:'Кластер пересоздаётся',add_master:'Добавляется master',add_worker:'Добавляется worker',destroy:'Кластер удаляется',verify:'Кластер проверяется',resources:'Ресурсы обновляются'};
+  panel.className = 'operation-progress ' + job.state;
+  $('progress-title').textContent = running ? (labels[job.action] || 'Операция выполняется') : job.state === 'success' ? 'Операция завершена успешно' : 'Операция остановлена с ошибкой';
+  const seconds = Math.max(0, Math.floor(((job.finished || Date.now()/1000) - job.started)));
+  $('progress-time').textContent = Math.floor(seconds/60) + ' мин ' + seconds%60 + ' с';
+  const lines = (job.log || '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split('\n');
+  const stage = lines.filter(line => /^(TASK \[|PLAY \[|==>)/.test(line)).pop();
+  $('progress-stage').textContent = running
+    ? (stage ? stage.replace(/\*+$/,'').trim() : 'Запуск скрипта…')
+    : job.state === 'success' ? 'Скрипт полностью завершил работу.' : 'Подробности и причина ошибки — в журнале операций ниже.';
+  panel.querySelector('.progress-track').hidden = !running;
+  if (running) {
+    $('health').textContent = job.action === 'create' ? 'Создаётся' : 'В процессе';
+    $('health-detail').textContent = 'Ждём завершения всех этапов скрипта';
+  }
+}
 function render() {
   const ready=state.nodes.filter(n=>n.state==='Ready').length;
   $('health').textContent=state.exists===false?'Не создан':state.reachable?'На связи':'Недоступен';
@@ -41,6 +65,7 @@ function render() {
     actions.append(wrap);tr.append(actions);$('node-list').append(tr);
   }
   setBusy(busy);
+  renderProgress();
 }
 function setBusy(value){busy=value;$('cluster-select').disabled=value;$('new-cluster').disabled=value;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=value || (!!state && !state.nodes.length && !['create'].includes(b.dataset.action)))}
 async function refresh(){try{$('refresh').disabled=true;state=await api('status');render();error(state.error||'')}catch(e){error(e.message)}finally{$('refresh').disabled=false}}
@@ -84,7 +109,7 @@ for(const id of ['cancel','close'])$(id).onclick=()=>$('modal').close();
 $('refresh').onclick=async()=>{await refresh();await loadLinks()};
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav').forEach(n=>n.classList.remove('active'));b.classList.add('active');if(b.dataset.view==='overview')window.scrollTo({top:0,behavior:'smooth'});else $(b.dataset.view).scrollIntoView({behavior:'smooth',block:'start'})});
 let polling=false;
-async function poll(){if(polling)return;polling=true;try{const job=await api('job');if(job){deployingCluster=job.state==='running' && ['create','version','add_master','add_worker'].includes(job.action)?(job.cluster||'default'):null;setBusy(job.state==='running');$('job-status').textContent='['+(job.cluster||'default')+'] '+(job.state==='running'?'Выполняется…':job.state==='success'?'Завершено':'Ошибка — проверьте журнал');const log=$('log');const bottom=log.scrollHeight-log.scrollTop-log.clientHeight<50;log.textContent=job.log.replace(/\x1b\[[0-9;]*m/g,'')||'Запускаем операцию…';if(bottom)log.scrollTop=log.scrollHeight;if(lastJob!==job.id+job.state){lastJob=job.id+job.state;await refresh();if(job.state!=='running'){await loadLinks()}}}}catch(e){error(e.message)}finally{polling=false}}
+async function poll(){if(polling)return;polling=true;try{const job=await api('job');activeJob=job;renderProgress();if(job){deployingCluster=job.state==='running' && ['create','version','add_master','add_worker'].includes(job.action)?(job.cluster||'default'):null;setBusy(job.state==='running');$('job-status').textContent='['+(job.cluster||'default')+'] '+(job.state==='running'?'Выполняется…':job.state==='success'?'Завершено':'Ошибка — проверьте журнал');const log=$('log');const bottom=log.scrollHeight-log.scrollTop-log.clientHeight<50;log.textContent=job.log.replace(/\x1b\[[0-9;]*m/g,'')||'Запускаем операцию…';if(bottom)log.scrollTop=log.scrollHeight;if(lastJob!==job.id+job.state){lastJob=job.id+job.state;await refresh();if(job.state!=='running'){await loadLinks()}}}}catch(e){error(e.message)}finally{polling=false}}
 async function loadClusters(){
   const names=await api('clusters');
   if(!names.includes(selectedCluster))selectedCluster='default';
@@ -99,4 +124,5 @@ $('new-cluster').onclick=()=>{
   field('name','Имя кластера, например lab2');field('network','Отдельная подсеть /24, например 192.168.59.0/24');
   $('submit').hidden=false;$('submit').textContent='Далее';$('modal').showModal();
 };
+setInterval(renderProgress,1000);
 (async()=>{try{await loadClusters()}catch(e){error(e.message)}await refresh();await loadLinks();await poll();setInterval(poll,2000)})();
