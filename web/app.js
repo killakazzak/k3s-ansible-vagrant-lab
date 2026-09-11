@@ -33,7 +33,19 @@ function renderProgress() {
   panel.className = 'operation-progress ' + job.state;
   $('progress-title').textContent = running ? (labels[job.action] || 'Операция выполняется') : job.state === 'success' ? 'Операция завершена успешно' : 'Операция остановлена с ошибкой';
   const seconds = Math.max(0, Math.floor(((job.finished || Date.now()/1000) - job.started)));
-  $('progress-time').textContent = Math.floor(seconds/60) + ' мин ' + seconds%60 + ' с';
+  $('progress-time').textContent = 'Прошло: ' + Math.floor(seconds/60) + ' мин ' + seconds%60 + ' с';
+  if (running) {
+    const estimate = job.estimated_seconds;
+    const remaining = estimate - seconds;
+    $('progress-time').textContent += Number.isFinite(estimate) && estimate > 0
+      ? (remaining > 0 ? ' · Осталось ≈ ' + Math.ceil(remaining/60) + ' мин' : ' · Дольше прогноза — выполнение продолжается')
+      : ' · Оставшееся время: пока нет данных';
+    $('progress-time').title = estimate > 0
+      ? 'Примерная оценка по последним успешным операциям с такими параметрами. Скорость сети и нагрузка Mac могут изменить время.'
+      : 'После первого успешного выполнения появится оценка для следующих запусков с такими параметрами.';
+  } else {
+    $('progress-time').title = '';
+  }
   const lines = (job.log || '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split('\n');
   const stage = lines.filter(line => /^(TASK \[|PLAY \[|==>)/.test(line)).pop();
   $('progress-stage').textContent = running

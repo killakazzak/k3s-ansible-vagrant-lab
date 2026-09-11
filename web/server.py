@@ -12,6 +12,8 @@ import json
 import os
 from pathlib import Path
 import secrets
+import statistics
+import math
 import subprocess
 import threading
 import time
@@ -182,8 +184,44 @@ def credentials(service):
         raise RuntimeError('Не удалось получить пароль. Проверьте доступность кластера и наличие Secret сервиса.') from None
 
 
+def timing_key(payload):
+    # Network addresses and names do not affect the amount of deployment work.
+    params = {k: str(v) for k, v in payload.get('params', {}).items()
+              if k not in ('network', 'network_mode', 'name', 'ip', 'confirmation')}
+    return json.dumps([payload['action'], params], sort_keys=True)
+
+def timing_history():
+    try:
+        data = json.loads((ROOT / '.cache/durations.json').read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+def timing_samples(key):
+    values = timing_history().get(key, [])
+    return [v for v in values if isinstance(v, (int, float)) and math.isfinite(v) and v > 0][-5:] if isinstance(values, list) else []
+
+def record_duration(key, seconds):
+    history = timing_history()
+    history[key] = (timing_samples(key) + [seconds])[-5:]
+    folder = ROOT / '.cache'
+    folder.mkdir(exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix='duration-', dir=folder)
+    try:
+        with os.fdopen(fd, 'w') as output:
+            json.dump(history, output)
+        os.replace(temporary, folder / 'durations.json')
+    finally:
+        if os.path.exists(temporary): os.unlink(temporary)
+
+
 def execute(job, payload):
     try:
+        key = timing_key(payload)
+        samples = timing_samples(key)
+        with LOCK:
+            job['estimated_seconds'] = statistics.median(samples) if samples else None
+            job['estimate_samples'] = len(samples)
         name = job.get('cluster', 'default')
         root = cluster_root(name)
         CONTEXT.root = root
@@ -215,6 +253,11 @@ def execute(job, payload):
     finally:
         with LOCK:
             job['finished'] = time.time()
+        if job['state'] == 'success':
+            try:
+                record_duration(key, job['finished'] - job['started'])
+            except OSError:
+                pass  # Optional timing history must not fail a completed deployment.
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -135,3 +135,18 @@ class RepeatedLaunchTests(unittest.TestCase):
                 first.communicate(timeout=5)
 
 if __name__ == '__main__': unittest.main()
+
+class TimingTests(unittest.TestCase):
+    def test_history_survives_reload_and_separates_sizes(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory, patch.object(app, 'ROOT', Path(directory)):
+            key = app.timing_key({'action':'create', 'params':{'masters':1, 'workers':2}})
+            self.assertEqual(app.timing_samples(key), [])
+            for seconds in [100, 200, 300, 400, 500, 600]:
+                app.record_duration(key, seconds)
+            self.assertEqual(app.timing_samples(key), [200, 300, 400, 500, 600])
+            self.assertEqual(app.statistics.median(app.timing_samples(key)), 400)
+            other = app.timing_key({'action':'create', 'params':{'masters':3, 'workers':2}})
+            self.assertEqual(app.timing_samples(other), [])
+            (Path(directory) / '.cache/durations.json').write_text('broken')
+            self.assertEqual(app.timing_samples(key), [])
