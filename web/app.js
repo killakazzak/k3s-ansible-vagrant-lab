@@ -124,7 +124,7 @@ document.addEventListener('click', e => {
   const a = e.target.closest('[data-action]'); if (a) openAction(a.dataset.action, a.dataset.node);
   const c = e.target.closest('[data-credentials]'); if (c) showPassword(c.dataset.credentials);
 });
-$('action-form').addEventListener('submit',async e=>{e.preventDefault();if(!currentAction)return;const params=Object.fromEntries(new FormData(e.target));$('submit').disabled=true;try{if(currentAction==='new_cluster'){const result=await api('clusters',params);selectedCluster=result.name;sessionStorage.setItem('lab-cluster',selectedCluster);$('modal').close();await loadClusters();await refresh();await loadLinks();openAction('create');return;}await api('action',{action:currentAction,params,confirmed:true,confirmation:params.confirmation});$('modal').close();setBusy(true);$('operations').scrollIntoView({behavior:'smooth'});await poll()}catch(e){$('form-error').textContent=e.message;$('form-error').hidden=false}finally{$('submit').disabled=false}});
+$('action-form').addEventListener('submit',async e=>{e.preventDefault();if(!currentAction)return;const params=Object.fromEntries(new FormData(e.target));$('submit').disabled=true;try{if(currentAction==='new_cluster'){const result=await api('clusters',{name:params.name,network:params.network,params,confirmed:true});selectedCluster=result.name;sessionStorage.setItem('lab-cluster',selectedCluster);$('modal').close();setBusy(true);await loadClusters();await poll();return;}await api('action',{action:currentAction,params,confirmed:true,confirmation:params.confirmation});$('modal').close();setBusy(true);$('operations').scrollIntoView({behavior:'smooth'});await poll()}catch(e){$('form-error').textContent=e.message;$('form-error').hidden=false}finally{$('submit').disabled=false}});
 for(const id of ['cancel','close'])$(id).onclick=()=>$('modal').close();
 $('refresh').onclick=async()=>{await loadClusters();await refresh();await loadLinks()};
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav').forEach(n=>n.classList.remove('active'));b.classList.add('active');if(b.dataset.view==='overview')window.scrollTo({top:0,behavior:'smooth'});else $(b.dataset.view).scrollIntoView({behavior:'smooth',block:'start'})});
@@ -145,9 +145,16 @@ $('cluster-select').onchange=async()=>{selectedCluster=$('cluster-select').value
 $('create-cluster').onclick=()=>{ $('new-cluster').click(); };
 $('new-cluster').onclick=()=>{
   currentAction='new_cluster';$('fields').replaceChildren();$('form-error').hidden=true;
-  $('modal-title').textContent='Новый кластер';$('modal-description').textContent='Создайте отдельный профиль. Затем выберите число узлов и ресурсы для развёртывания. Текущий кластер сохранится.';
+  $('modal-title').textContent='Новый кластер';$('modal-description').textContent='Выберите имя, сеть и ресурсы. Кластер сохранится и начнёт создаваться только после нажатия «Подтвердить».';
   field('name','Имя кластера — автоматически, если оставить пустым');$('field-name').required=false;$('field-name').placeholder='k8s-cluster2, k8s-cluster3, …';field('network','Отдельная подсеть /24, например 192.168.59.0/24');
-  $('submit').hidden=false;$('submit').textContent='Далее';$('modal').showModal();
+  field('masters','Количество master',1,'number',1,7);field('workers','Количество workers',2,'number',1,32);
+  for(const role of ['server','workers']){
+    const n=state.defaults[role];
+    field(role+'_cpu',(role==='server'?'Master':'Worker')+': CPU на узел',n.cpu,'number',1,32);
+    field(role+'_ram','ОЗУ на узел, МБ',n.ram,'number',state.rancher?4096:1024,65536);
+    field(role+'_disk','Диск на узел, ГБ',n.disk,'number',25,2048);
+  }
+  $('submit').hidden=false;$('submit').textContent='Подтвердить';$('modal').showModal();
 };
 let autoRefreshing=false;
 async function autoRefresh(){

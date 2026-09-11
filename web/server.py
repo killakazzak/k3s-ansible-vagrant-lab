@@ -85,7 +85,7 @@ def next_cluster_name():
         index += 1
     return 'k8s-cluster' + str(index)
 
-def new_cluster(name, cidr):
+def new_cluster(name, cidr, params=None):
     name = name.strip() or next_cluster_name()
     if not re.fullmatch(r'[a-z][a-z0-9-]{0,30}', name) or name == 'default':
         raise ValueError('Имя: строчные латинские буквы, цифры и дефисы, до 31 символа')
@@ -113,6 +113,12 @@ def new_cluster(name, cidr):
         cfg = json.loads(subprocess.check_output(['ruby','-ryaml','-rjson','-e',"puts JSON.generate(YAML.load_file('ansible/group_vars/all.yml'))"],cwd=temp,text=True))
         if any(network.overlaps(ipaddress.ip_network(cfg[k])) for k in ['pod_subnet','service_subnet']):
             raise ValueError('Сеть пересекается с pod/service сетью')
+        if params is not None:
+            # Validate and save the requested topology before publishing the profile.
+            plan = "require File.expand_path('scripts/web-action',Dir.pwd); p=JSON.parse(STDIN.read); m=WebAction.new(Dir.pwd,[]); data,changes=m.creation_plan(p);m.set_values(changes);m.write(File.join(Dir.pwd,'ansible/inventory.yml'),YAML.dump(data))"
+            proc = subprocess.run(['ruby', '-e', plan], cwd=temp, input=json.dumps(dict(params, network_mode='existing')), capture_output=True, text=True)
+            if proc.returncode:
+                raise ValueError('Проверьте параметры кластера: ' + proc.stderr.strip())
         temp.rename(target)
     finally:
         if temp.exists(): shutil.rmtree(temp)
@@ -366,10 +372,16 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('Некорректный размер запроса')
             data = json.loads(self.rfile.read(length))
             if self.path == '/api/clusters':
+                if data.get('confirmed') is not True or not isinstance(data.get('params'), dict):
+                    raise ValueError('Подтвердите создание кластера с выбранными параметрами')
                 with LOCK:
                     if JOB and JOB['state'] == 'running':
                         return self.reply(409, {'error':'Дождитесь текущей операции'})
-                    return self.reply(201, new_cluster(data.get('name', ''), data.get('network', '')))
+                    result = new_cluster(data.get('name', ''), data.get('network', ''), data['params'])
+                    payload = {'action':'create', 'confirmed':True, 'params':dict(data['params'], network_mode='existing')}
+                    JOB = dict(cluster=result['name'], id=secrets.token_hex(8), action='create', state='running', log='', started=time.time())
+                    threading.Thread(target=execute, args=(JOB, payload), daemon=True).start()
+                    return self.reply(201, result)
             action = data.get('action')
             if action not in ACTIONS or data.get('confirmed') is not True:
                 raise ValueError('Неизвестная операция или нет подтверждения')

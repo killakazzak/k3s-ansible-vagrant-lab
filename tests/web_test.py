@@ -50,6 +50,22 @@ class ConsoleTests(unittest.TestCase):
                 self.assertEqual(response.headers['Cache-Control'], 'no-store')
         app.CONTEXT.root = app.ROOT
 
+    def test_new_cluster_requires_final_confirmation(self):
+        with patch.object(app, 'new_cluster') as create:
+            code, _ = self.request('/api/clusters', {'name':'lab','network':'192.168.60.0/24'})
+            self.assertEqual(code,400)
+            create.assert_not_called()
+
+    def test_confirmed_cluster_starts_one_scoped_job(self):
+        called=threading.Event()
+        with patch.object(app, 'new_cluster', return_value={'name':'k8s-cluster4'}) as create, patch.object(app, 'execute', side_effect=lambda *args: called.set()):
+            code, _ = self.request('/api/clusters', {'name':'','network':'192.168.60.0/24','confirmed':True,'params':{'masters':1}})
+            self.assertEqual(code,201)
+            self.assertTrue(called.wait(2))
+            create.assert_called_once()
+            self.assertEqual(app.JOB['cluster'],'k8s-cluster4')
+            self.assertEqual(app.JOB['action'],'create')
+
     def test_password_endpoint_requires_auth(self):
         with patch.object(app, 'credentials') as fetch:
             self.assertEqual(self.request('/api/credentials/traefik', token=False)[0], 401)
@@ -106,7 +122,12 @@ class ClusterIsolationTests(unittest.TestCase):
                 candidates = ['192.168.60.0/24','192.168.61.0/24','192.168.62.0/24']
                 net = next(n for n in candidates if n != current)
                 self.assertEqual(app.next_cluster_name(), 'k8s-cluster2')
-                app.new_cluster('', net)
+                params={'masters':1,'workers':3,'server_cpu':4,'server_ram':4096,'server_disk':25,'workers_cpu':2,'workers_ram':4096,'workers_disk':25}
+                with self.assertRaises(ValueError):
+                    app.new_cluster('invalid-plan', net, dict(params,server_disk=24))
+                self.assertFalse((root / '.clusters/invalid-plan').exists())
+                self.assertFalse(list((root / '.clusters').glob('.new-*')))
+                app.new_cluster('', net, params)
                 self.assertEqual(app.cluster_names(), ['default','k8s-cluster2'])
                 self.assertEqual((root / 'ansible/inventory.yml').read_bytes(), original)
                 profile = app.cluster_root('k8s-cluster2')
@@ -120,6 +141,8 @@ class ClusterIsolationTests(unittest.TestCase):
                 app.CONTEXT.root = profile
                 result = app.config()
                 self.assertEqual(result['network'], net)
+                self.assertEqual(len(result['nodes']),4)
+                self.assertTrue(all(n['disk']==25 for n in result['nodes']))
                 self.assertEqual(app.next_cluster_name(), 'k8s-cluster3')
                 self.assertEqual(result['node_prefix'], 'k8s-cluster2')
                 self.assertTrue(all(n['name'].startswith('k8s-cluster2-') for n in result['nodes']))
