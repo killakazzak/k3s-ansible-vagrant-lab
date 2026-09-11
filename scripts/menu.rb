@@ -124,6 +124,7 @@ class ClusterMenu
       puts "\nСостояние ВМ проверить не удалось. Ниже только сохранённая конфигурация."
     end
     puts "\nВерсия: #{cfg['k3s_version']}; провайдер: #{cfg['vm_provider']}"
+    puts "Текущий inventory (ansible/inventory.yml) — сохранённая конфигурация узлов; их наличие и запуск этим списком не подтверждаются."
     inventory['all']['children'].each do |group, entry|
       entry['hosts'].each do |name, host|
         cpu = host.fetch('vm_cpus', cfg['vm_cpus'][group])
