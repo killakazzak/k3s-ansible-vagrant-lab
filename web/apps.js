@@ -117,5 +117,12 @@ function renderPVC(p){
 }
 
 let secretData=[];
-async function refreshSecrets(){const cluster=selectedCluster;try{const data=await api('secret-info');if(cluster!==selectedCluster)return;secretData=data;const box=$('secret-list');box.replaceChildren();for(const s of data){const card=element('article',undefined,'app-card');card.append(element('h3',s.name),element('span','Namespace: '+s.namespace,'pvc-namespace-badge'),element('p','Тип: '+s.type),element('p','Ключи: '+(s.keys.join(', ')||'нет')),element('p',s.hasPassword?'✓ Есть ключ password — можно выбрать при подключении базы':'Нет ключа password'));box.append(card)}if(!data.length)box.append(element('p','Secrets приложений пока нет.'));}catch(e){if(cluster===selectedCluster)$('secret-list').textContent=e.message}}
+const secretNamespaces=new Map();
+function renderSecrets(){
+ const namespaces=[...new Set(secretData.map(s=>s.namespace))].sort();const select=$('secret-namespace');let chosen=secretNamespaces.get(selectedCluster)||'';if(!namespaces.includes(chosen))chosen='';secretNamespaces.set(selectedCluster,chosen);select.replaceChildren();
+ for(const ns of ['',...namespaces]){const option=element('option',(ns||'Все (All)')+' · '+secretData.filter(s=>!ns||s.namespace===ns).length);option.value=ns;select.append(option)}select.value=chosen;
+ const data=secretData.filter(s=>!chosen||s.namespace===chosen);const box=$('secret-list');box.replaceChildren();for(const s of data){const card=element('article',undefined,'app-card');card.append(element('h3',s.name),element('span','Namespace: '+s.namespace,'pvc-namespace-badge'),element('p','Тип: '+s.type),element('p','Ключи: '+(s.keys.join(', ')||'нет')),element('p',s.hasPassword?'✓ Есть ключ password — можно выбрать при подключении базы':'Нет ключа password'));box.append(card)}if(!data.length)box.append(element('p','Secrets приложений пока нет.'));
+}
+async function refreshSecrets(){const cluster=selectedCluster;try{const data=await api('secret-info');if(cluster!==selectedCluster)return;secretData=data;renderSecrets();}catch(e){if(cluster===selectedCluster)$('secret-list').textContent=e.message}}
+$('secret-namespace').onchange=()=>{secretNamespaces.set(selectedCluster,$('secret-namespace').value);renderSecrets()};
 $('secret-refresh').onclick=refreshSecrets;$('cluster-select').addEventListener('change',()=>{secretData=[];$('secret-list').replaceChildren();refreshSecrets()});setInterval(()=>{if(!document.hidden)refreshSecrets()},15000);refreshSecrets();
