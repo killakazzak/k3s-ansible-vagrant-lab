@@ -5,6 +5,7 @@ require 'fileutils'
 require 'json'
 require 'open3'
 require 'shellwords'
+require 'uri'
 require_relative 'creation'
 
 class ClusterMenu
@@ -349,7 +350,31 @@ class ClusterMenu
     run(File.join(path, 'kubectl.sh'), 'get', 'nodes', '-o', 'wide', '--request-timeout=10s')
   end
 
+  def show_web_link
+    base = cluster_profiles.first.last
+    path = File.join(base, '.cache/web.lock')
+    if File.file?(path)
+      File.open(path, 'r') do |lock|
+        # A held lock belongs to the running console; an unlocked file is stale.
+        unless lock.flock(File::LOCK_EX | File::LOCK_NB)
+          url = JSON.parse(lock.read).fetch('url')
+          uri = URI.parse(url)
+          if uri.scheme == 'http' && uri.host == '127.0.0.1' && !uri.userinfo && url !~ /[\x00-\x20\x7f]/
+            puts "\nВеб-интерфейс управления: #{url}\n\n"
+            return
+          end
+        end
+      end
+    end
+    puts "\nВеб-консоль не запущена. Запуск в другом терминале:"
+    puts "#{Shellwords.escape(File.join(base, 'cluster.sh'))} web"
+    puts 'После запуска откройте полный адрес, который появится в терминале.'
+  rescue JSON::ParserError, KeyError, URI::InvalidURIError, SystemCallError
+    puts "Веб-консоль: запустите #{Shellwords.escape(File.join(base, 'cluster.sh'))} web, чтобы получить актуальную ссылку."
+  end
+
   def start
+    show_web_link
     loop do
       show
       puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Веб-интерфейс управления\n13. Список кластеров\n14. Подключиться через kubectl\n0. Выход"
