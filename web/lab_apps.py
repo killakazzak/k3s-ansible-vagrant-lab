@@ -308,6 +308,31 @@ class Apps:
         if c['type'] in ('postgres','rabbitmq') and not c['storage_secret'] and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Secret для базы уже существует; используйте другое имя')
         if kind=='StatefulSet' and c['storage_mode']=='new' and self.find('pvc',c['namespace'],'data-'+c['name']+'-0'):raise ValueError('Сохранённый PVC уже существует. Используйте другое имя или восстановите приложение вручную.')
         return c,kind,objects,host
+    def wait_rollout(self,kind,name,ns,seconds=240):
+        try:
+            return self.kubectl(['rollout','status',kind.lower()+'/'+name,'-n',ns,'--timeout='+str(seconds)+'s'],timeout=seconds+10)
+        except (ValueError,subprocess.TimeoutExpired) as error:
+            details=[]
+            try:
+                for item in self.workload_pods(dict(kind=kind,name=name,namespace=ns)):
+                    pod=self.get('pod',ns,item['name'])
+                    for condition in pod.get('status',{}).get('conditions',[]):
+                        if condition.get('type')=='PodScheduled' and condition.get('status')=='False':
+                            message=condition.get('message','')
+                            hints=[]
+                            if 'Insufficient memory' in message:hints.append('Недостаточно свободной памяти по requests. Увеличьте RAM worker или добавьте worker; низкая текущая утилизация не означает наличие свободной квоты для размещения.')
+                            if 'Insufficient cpu' in message:hints.append('Недостаточно CPU по requests. Увеличьте CPU worker или добавьте worker.')
+                            if 'taint' in message:hints.append('Часть узлов исключена из размещения из-за taints.')
+                            details.append(item['name']+': '+(' '.join(hints) or message))
+                    for status in pod.get('status',{}).get('containerStatuses',[])+pod.get('status',{}).get('initContainerStatuses',[]):
+                        waiting=status.get('state',{}).get('waiting',{})
+                        if waiting.get('reason'):details.append(item['name']+'/'+status['name']+': '+waiting['reason'])
+            except Exception:
+                pass  # Diagnostics must not replace the original deployment failure.
+            if details:
+                raise ValueError('Приложение '+ns+'/'+name+' пока не готово. '+' '.join(dict.fromkeys(details))+' Ресурсы сохранены; после устранения причины выполните «Проверить».') from error
+            raise
+
     def deploy(self,config,prepared=None):
         c,kind,objects,host=prepared or self.preflight(config);ns=c['namespace'];name=c['name']
         print('TASK [Создать '+ns+'/'+name+']',flush=True)
@@ -315,10 +340,10 @@ class Apps:
         if c['type'] in ('postgres','rabbitmq') and not c['storage_secret']:
             self.apply([dict(apiVersion='v1',kind='Secret',metadata=dict(name=name+'-auth',namespace=ns),type='Opaque',stringData={'password':secrets.token_urlsafe(32)})])
         self.apply(objects)
-        print(self.kubectl(['rollout','status',kind.lower()+'/'+name,'-n',ns,'--timeout=240s'],timeout=250),flush=True)
+        print(self.wait_rollout(kind,name,ns),flush=True)
         self.check(c,kind,host)
         if c['type'] in app_panels.IMAGES:
-            print(self.kubectl(['rollout','status','deployment/'+name+'-ui','-n',ns,'--timeout=300s'],timeout=310),flush=True)
+            print(self.wait_rollout('Deployment',name+'-ui',ns,300),flush=True)
             print('Веб-панель: '+next(o['stringData']['url'] for o in objects if o['kind']=='Secret' and o['metadata']['name']==name+'-ui-auth')+' — учётные данные в карточке приложения.',flush=True)
         print('Готово: '+(host and 'http://'+host+'/' or name+'.'+ns+'.svc.cluster.local:'+str(c['port'])),flush=True)
         if c['type']=='rabbitmq':print('RabbitMQ: пользователь app, пароль в Secret '+ns+'/'+(c['storage_secret'] or name+'-auth')+' (ключ password).',flush=True)
@@ -333,7 +358,7 @@ class Apps:
     def _check(self,c,kind,host=''):
         ns=c['namespace'];name=c['name'];target=kind.lower()+'/'+name
         print('TASK [Проверки: готовность, DNS, сеть и приложение]',flush=True)
-        print(self.kubectl(['rollout','status',target,'-n',ns,'--timeout=180s'],timeout=190),flush=True)
+        print(self.wait_rollout(kind,name,ns,180),flush=True)
         probe='lab-check-'+secrets.token_hex(4)
         dnsname=name+'.'+ns+'.svc.cluster.local'
         script='import socket,sys; h,p=sys.argv[1],int(sys.argv[2]); socket.getaddrinfo(h,p); c=socket.create_connection((h,p),10); c.close(); print("DNS/TCP OK")'
@@ -398,7 +423,7 @@ class Apps:
                     if owned and not ready and differs:
                         self.kubectl(['delete','pod',pod['metadata']['name'],'-n',ns,'--wait=true','--timeout=60s'],timeout=70)
 
-        if action!='app_check':print(self.kubectl(['rollout','status',target,'-n',ns,'--timeout=180s'],timeout=190),flush=True)
+        if action!='app_check':print(self.wait_rollout(kind,name,ns,180),flush=True)
         if action=='app_check':
             service=self.get('service',ns,name)
             host=next((r.get('host','') for i in self.get('ingress',ns)['items'] for r in i.get('spec',{}).get('rules',[]) if any(p.get('backend',{}).get('service',{}).get('name')==name for p in r.get('http',{}).get('paths',[]))),'')

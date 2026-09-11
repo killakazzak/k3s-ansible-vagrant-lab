@@ -6,6 +6,18 @@ import lab_apps as lab
 class LabTests(unittest.TestCase):
  def setUp(self):
   host=patch.object(lab.Apps,'host',side_effect=lambda c: c['host']+'.example.test' if c['host'] else '');host.start();self.addCleanup(host.stop)
+ def test_rollout_explains_scheduler_failure(self):
+  app=lab.Apps('/tmp')
+  pod={'status':{'conditions':[{'type':'PodScheduled','status':'False','message':'0/2 nodes: 1 Insufficient memory, 1 untolerated taint'}]}}
+  with patch.object(app,'kubectl',side_effect=ValueError('timed out')),patch.object(app,'workload_pods',return_value=[{'name':'rabbitmq-0'}]),patch.object(app,'get',return_value=pod):
+   with self.assertRaisesRegex(ValueError,'Недостаточно свободной памяти по requests') as result:app.wait_rollout('StatefulSet','rabbitmq','dev')
+   self.assertIn('taints',str(result.exception))
+   self.assertIn('Ресурсы сохранены',str(result.exception))
+ def test_rollout_preserves_error_when_diagnostics_unavailable(self):
+  app=lab.Apps('/tmp')
+  with patch.object(app,'kubectl',side_effect=ValueError('original failure')),patch.object(app,'workload_pods',side_effect=ValueError('API unavailable')):
+   with self.assertRaisesRegex(ValueError,'original failure'):app.wait_rollout('Deployment','web','dev')
+
  def test_manifest_and_validation(self):
   app=lab.Apps('/tmp')
   c,k,objects,h=app.plan(dict(type='postgres',name='db',namespace='dev'))
