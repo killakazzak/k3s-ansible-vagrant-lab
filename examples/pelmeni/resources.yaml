@@ -4,17 +4,18 @@ metadata:
   name: pelmeni
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: pelmeni
   namespace: pelmeni
 spec:
+  serviceName: pelmeni-headless
   replicas: 1
   selector:
-    matchLabels: {app: pelmeni}
+    matchLabels: {app: pelmeni, workload: statefulset}
   template:
     metadata:
-      labels: {app: pelmeni}
+      labels: {app: pelmeni, workload: statefulset}
     spec:
       containers:
         - name: nginx
@@ -67,3 +68,15 @@ spec:
               service:
                 name: pelmeni
                 port: {number: 80}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pelmeni-headless
+  namespace: pelmeni
+spec:
+  clusterIP: None
+  selector: {app: pelmeni, workload: statefulset}
+  ports:
+    - {name: http, port: 80, targetPort: http}
