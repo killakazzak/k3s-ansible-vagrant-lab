@@ -264,11 +264,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-    def reply(self, code, data, content_type='application/json; charset=utf-8'):
+    def reply(self, code, data, content_type='application/json; charset=utf-8', download=None):
         body = json.dumps(data, ensure_ascii=False).encode() if not isinstance(data, bytes) else data
         self.send_response(code)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(body)))
+        if download:
+            self.send_header('Content-Disposition', 'attachment; filename="' + download + '"')
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
@@ -305,6 +307,19 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed():
             return
         try:
+            if path == '/api/kubeconfig':
+                file = active_root() / 'kubeconfig'
+                if file.is_symlink():
+                    return self.reply(409, {'error': 'Файл подключения недоступен для скачивания.'})
+                try:
+                    content = file.read_bytes()
+                except FileNotFoundError:
+                    content = b''
+                if not content:
+                    return self.reply(409, {'error': 'Доступ к кластеру пока не готов. Kubeconfig появится после настройки кластера. Дождитесь завершения развёртывания.'})
+                name = self.headers.get('X-Lab-Cluster', 'default')
+                filename = ('k8s-cluster1' if name == 'default' else name) + '-kubeconfig.yaml'
+                return self.reply(200, content, 'application/yaml', download=filename)
             if path == '/api/clusters':
                 return self.reply(200, cluster_names())
             if path in ('/api/credentials/rancher', '/api/credentials/traefik'):

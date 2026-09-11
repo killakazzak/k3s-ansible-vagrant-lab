@@ -139,3 +139,20 @@ $('new-cluster').onclick=()=>{
 };
 setInterval(renderProgress,1000);
 (async()=>{try{await loadClusters()}catch(e){error(e.message)}await refresh();await loadLinks();await poll();setInterval(poll,2000)})();
+
+$('download-kubeconfig').onclick=async()=>{
+  const button=$('download-kubeconfig');
+  const cluster=selectedCluster;
+  button.disabled=true;
+  try {
+    const response=await fetch('/api/kubeconfig',{headers:{'X-Lab-Token':token,'X-Lab-Cluster':cluster}});
+    if(!response.ok){const result=await response.json();throw Error(result.error)}
+    const blob=await response.blob();
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;link.download=(cluster==='default'?'k8s-cluster1':cluster)+'-kubeconfig.yaml';
+    document.body.append(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    error('');
+  } catch(e){error(e.message)} finally{button.disabled=false}
+};

@@ -27,6 +27,29 @@ class ConsoleTests(unittest.TestCase):
         try:
             with urlopen(req) as response: return response.status, response.read()
         except HTTPError as e: return e.code, e.read()
+    def test_kubeconfig_download_is_authenticated_and_scoped(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory, patch.object(app, 'ROOT', Path(directory)):
+            root = Path(directory)
+            (root / 'kubeconfig').write_bytes(b'default-test-config')
+            profile = root / '.clusters/k8s-cluster2'
+            profile.mkdir(parents=True)
+            (profile / 'kubeconfig').write_bytes(b'second-test-config')
+            self.assertEqual(self.request('/api/kubeconfig', token=False)[0], 401)
+            self.assertEqual(self.request('/api/kubeconfig'), (200, b'default-test-config'))
+            self.assertEqual(self.request('/api/kubeconfig', headers={'X-Lab-Cluster':'k8s-cluster2'}), (200, b'second-test-config'))
+            (profile / 'kubeconfig').unlink()
+            code, body = self.request('/api/kubeconfig', headers={'X-Lab-Cluster':'k8s-cluster2'})
+            self.assertEqual(code, 409)
+            self.assertIn('пока не готов', json.loads(body)['error'])
+            (profile / 'kubeconfig').symlink_to(root / 'kubeconfig')
+            self.assertEqual(self.request('/api/kubeconfig', headers={'X-Lab-Cluster':'k8s-cluster2'})[0],409)
+            req=Request(f'http://127.0.0.1:{self.port}/api/kubeconfig',headers={'X-Lab-Token':app.TOKEN})
+            with urlopen(req) as response:
+                self.assertEqual(response.headers['Content-Disposition'], 'attachment; filename="k8s-cluster1-kubeconfig.yaml"')
+                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        app.CONTEXT.root = app.ROOT
+
     def test_password_endpoint_requires_auth(self):
         with patch.object(app, 'credentials') as fetch:
             self.assertEqual(self.request('/api/credentials/traefik', token=False)[0], 401)
