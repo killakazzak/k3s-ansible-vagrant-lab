@@ -72,8 +72,11 @@ print 'Tab — дополнение · ↑/↓ — история · Ctrl+C — 
             fg=os.tcgetpgrp(self.master)
             if fg>0 and fg!=os.getpgrp(): os.killpg(fg,signal.SIGHUP)
         except OSError: pass
-        try: os.killpg(self.process.pid,signal.SIGHUP)
-        except ProcessLookupError: pass
+        if self.process.poll() is None:
+            try: os.killpg(self.process.pid,signal.SIGHUP)
+            except ProcessLookupError: pass
+            except PermissionError:
+                if self.process.poll() is None:self.process.terminate()
         os.close(self.master)
         try: self.process.wait(timeout=2)
         except subprocess.TimeoutExpired:
