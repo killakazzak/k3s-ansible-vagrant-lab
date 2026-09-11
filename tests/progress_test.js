@@ -29,3 +29,16 @@ assert.match(elements['progress-title'].textContent,/ошибкой/);
 context.selectedCluster='lab2';context.renderProgress();
 assert.equal(elements['operation-progress'].hidden,true);
 console.log('Progress tests passed: running beyond API readiness, success, failure, cluster scope.');
+
+// Browsing another cluster stays available while mutations remain serialized.
+const buttons=[{dataset:{action:'create'}},{dataset:{action:'destroy'}}];
+context.document={querySelectorAll:()=>buttons};
+context.clusterCount=2;context.state={nodes:[{}]};
+vm.runInContext(source.slice(source.indexOf('function setBusy('),source.indexOf('async function refresh(')),context);
+context.setBusy(true);
+assert.equal(elements['cluster-select'].disabled,false);
+assert.equal(elements['new-cluster'].disabled,true);
+assert.ok(buttons.every(button=>button.disabled));
+context.clusterCount=0;context.setBusy(true);
+assert.equal(elements['cluster-select'].disabled,true);
+console.log('Cluster selection remains available during deployment.');

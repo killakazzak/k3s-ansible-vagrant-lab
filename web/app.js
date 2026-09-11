@@ -80,7 +80,7 @@ function render() {
   setBusy(busy);
   renderProgress();
 }
-function setBusy(value){busy=value;$('cluster-select').disabled=value || clusterCount===0;$('new-cluster').disabled=value;$('create-cluster').disabled=value;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=value || (!!state && !state.nodes.length && !['create'].includes(b.dataset.action)))}
+function setBusy(value){busy=value;$('cluster-select').disabled=clusterCount===0;$('new-cluster').disabled=value;$('create-cluster').disabled=value;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=value || (!!state && !state.nodes.length && !['create'].includes(b.dataset.action)))}
 async function refresh(){
   while(refreshPromise){await refreshPromise;}
   const cluster=selectedCluster;
@@ -89,7 +89,7 @@ async function refresh(){
   await request;
   if(refreshPromise===request)refreshPromise=null;
 }
-async function loadLinks(){if(state && !state.nodes.length){for(const name of ['rancher','traefik']){const a=$(name+'-link');a.removeAttribute('href');a.textContent='Появится после создания кластера'}return;}try{const links=await api('links');for(const name of ['rancher','traefik']){const a=$(name+'-link');if(state && !state[name]){a.textContent='Отключён в конфигурации';a.removeAttribute('href');continue}const url=new URL(links[name]);if(url.protocol!=='https:')throw Error('Некорректная ссылка');a.href=url.href;a.textContent=url.hostname+' ↗'}}catch(e){for(const name of ['rancher','traefik'])$(name+'-link').textContent='Адрес недоступен';error(e.message)}}
+async function loadLinks(){const cluster=selectedCluster;if(state && !state.nodes.length){for(const name of ['rancher','traefik']){const a=$(name+'-link');a.removeAttribute('href');a.textContent='Появится после создания кластера'}return;}try{const links=await api('links');if(cluster!==selectedCluster)return;for(const name of ['rancher','traefik']){const a=$(name+'-link');if(state && !state[name]){a.textContent='Отключён в конфигурации';a.removeAttribute('href');continue}const url=new URL(links[name]);if(url.protocol!=='https:')throw Error('Некорректная ссылка');a.href=url.href;a.textContent=url.hostname+' ↗'}}catch(e){if(cluster!==selectedCluster)return;for(const name of ['rancher','traefik'])$(name+'-link').textContent='Адрес недоступен';error(e.message)}}
 const definitions={create:['Применить выбранный','Эта форма изменяет выбранный кластер. Для второго кластера нажмите «Новый кластер». Для существующих VM меняйте состав через добавление и удаление отдельных узлов.'],add_master:['Добавить master','Для устойчивости etcd нужны 3 master. Первый master остаётся адресом API.'],add_worker:['Добавить worker','Новая виртуальная машина присоединится к текущему кластеру.'],remove_master:['Удалить master','Будут выполнены snapshot etcd, drain и исключение узла из etcd. Данные VM будут удалены.'],remove_worker:['Удалить worker','Будут выполнены drain и удаление VM. Данные диска и emptyDir будут потеряны; локальные PV не переносятся автоматически.'],resources:['Ресурсы узла','Существующая VM будет перезагружена. Изменение master временно прервёт доступ к API.'],version:['Изменить версию k3s','Это пересоздание лаборатории: все VM и их данные будут удалены. Это не обновление с сохранением данных.'],destroy:['Удалить кластер','Все виртуальные машины этого проекта и данные их дисков будут удалены. Кэш загрузок сохранится.'],verify:['Проверить кластер','Проверим DNS, межузловую сеть и HTTP через Traefik. Тестовые ресурсы будут удалены после проверки.']};
 function field(name,label,value='',type='text',min,max){const l=element('label',label);l.htmlFor='field-'+name;const input=element('input');input.id=l.htmlFor;input.name=name;input.type=type;input.value=value;input.required=true;if(min!==undefined)input.min=min;if(max!==undefined)input.max=max;$('fields').append(l,input)}
 function openAction(action,nodeName){if(!state)return;currentAction=action;$('fields').replaceChildren();$('form-error').hidden=true;$('submit').hidden=false;$('submit').textContent='Подтвердить';$('modal-title').textContent=definitions[action][0];$('modal-description').textContent='Кластер: '+selectedCluster+'. '+definitions[action][1];
@@ -139,7 +139,7 @@ async function loadClusters(){
   if(!names.length){const empty=element('option','Нет кластеров — создайте новый');empty.value='default';$('cluster-select').append(empty)}
   for(const name of names){const option=element('option',name==='default'?'k8s-cluster1 (основной)':name);option.value=name;$('cluster-select').append(option)}
   $('cluster-select').value=selectedCluster;
-  $('cluster-select').disabled=busy || !names.length;
+  $('cluster-select').disabled=!names.length;
 }
 $('cluster-select').onchange=async()=>{selectedCluster=$('cluster-select').value;sessionStorage.setItem('lab-cluster',selectedCluster);await refresh();await loadLinks()};
 $('create-cluster').onclick=()=>{ $('new-cluster').click(); };
