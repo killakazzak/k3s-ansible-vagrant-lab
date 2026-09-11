@@ -59,6 +59,17 @@ class LabTests(unittest.TestCase):
     elif replicas==0:self.assertEqual(cmd.call_args.args[0],['scale','deployment/web','-n','dev','--replicas=1'])
     else:self.assertEqual(cmd.call_args.args[0],['rollout','restart','deployment/web','-n','dev'])
 
+ def test_resource_yaml_is_scoped_and_rejects_unknown_types(self):
+  app=lab.Apps('/tmp')
+  with patch.object(app,'kubectl',return_value='kind: Deployment\n') as cmd:
+   result=app.resource_yaml(dict(type='deployments',namespace='dev',name='web'))
+   self.assertEqual(result['filename'],'dev_deployments_web.yaml')
+   self.assertEqual(cmd.call_args.args[0],['get','deployments.apps','web','-n','dev','-o','yaml','--show-managed-fields=false','--request-timeout=10s'])
+  with patch.object(app,'kubectl') as cmd:
+   for data in [dict(type='nodes',namespace='dev',name='one'),dict(type='pods',namespace='dev',name='--all')]:
+    with self.assertRaises(ValueError):app.resource_yaml(data)
+   cmd.assert_not_called()
+
  def test_manifest_and_validation(self):
   app=lab.Apps('/tmp')
   c,k,objects,h=app.plan(dict(type='postgres',name='db',namespace='dev'))

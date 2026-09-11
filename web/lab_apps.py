@@ -152,6 +152,14 @@ class Apps:
             configs.append(validate(config))
         return save_template(dict(name=data.get('name'),apps=configs))
 
+    def resource_yaml(self,data):
+        resources={'pods':'pods','pvcs':'persistentvolumeclaims','secrets':'secrets','deployments':'deployments.apps','statefulsets':'statefulsets.apps','daemonsets':'daemonsets.apps','jobs':'jobs.batch','cronjobs':'cronjobs.batch','services':'services','ingresses':'ingresses.networking.k8s.io','configmaps':'configmaps'}
+        resource=resources.get(data.get('type'))
+        if not resource:raise ValueError('Неизвестный тип ресурса')
+        ns=namespace(data.get('namespace'));name=dns(data.get('name'))
+        output=self.kubectl(['get',resource,name,'-n',ns,'-o','yaml','--show-managed-fields=false','--request-timeout=10s'])
+        return dict(yaml=output,filename=ns+'_'+data['type']+'_'+name+'.yaml')
+
     def resources(self):
         items=self.get('deployments.apps,statefulsets.apps,daemonsets.apps,jobs.batch,cronjobs.batch,services,ingresses.networking.k8s.io,configmaps')['items']
         result=[]

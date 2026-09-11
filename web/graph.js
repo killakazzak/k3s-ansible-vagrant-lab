@@ -152,6 +152,7 @@ function resourceButton(label,fn,cls='button secondary'){const b=element('button
 function showResource(type,item){resourceSelected={type,key:resourceKey(item),cluster:selectedCluster};renderResourceDetail(item);renderResources(true);}
 function renderResourceDetail(item){
  const body=$('resource-detail-body');body.replaceChildren();$('resource-detail').hidden=false;
+ const resourceType=resourceSelected.type;const yamlActions=element('div',undefined,'resource-yaml-actions');yamlActions.append(resourceButton('Просмотреть YAML',()=>openResourceYaml(resourceType,item)),resourceButton('↓ Скачать YAML',()=>openResourceYaml(resourceType,item,true)));body.append(yamlActions);
  if(resourceSelected.type==='pvcs'){body.append(renderPVC(item));for(const name of item.pods){const pod=resourceItems().pods.find(p=>p.namespace===item.namespace&&p.name===name);if(pod)body.append(resourceButton('Pod → '+name,()=>showResource('pods',pod)))}return;}
  body.append(element('h3',item.name),element('span',item.namespace,'pvc-namespace-badge'));
  const list=element('dl',undefined,'pvc-details');const entry=(label,value)=>list.append(element('dt',label),element('dd',value||'—'));
@@ -191,3 +192,13 @@ $('cluster-select').addEventListener('change',()=>{resourceSelected=null;$('reso
 setInterval(()=>{if(!document.hidden)renderResources()},2000);renderResources();
 
 $('cluster-select').addEventListener('change',refreshExtraResources);setInterval(()=>{if(!document.hidden)refreshExtraResources()},15000);refreshExtraResources();
+
+async function openResourceYaml(type,item,download=false){
+ const cluster=selectedCluster;
+ labOpen('YAML · '+item.name,'Кластер '+cluster+' · '+item.namespace+'. Текущий объект Kubernetes, включая status и служебные поля; это не очищенный шаблон для переноса.'+(type==='secrets'?' Secret содержит значения в base64 — это не шифрование.':''),null);
+ const output=element('pre','Загрузка YAML…','resource-yaml-output');$('lab-extra').append(output);
+ try{const data=await api('resource-yaml',{type,name:item.name,namespace:item.namespace});if(cluster!==selectedCluster||!output.isConnected)return;output.textContent=data.yaml;
+ const save=()=>{const blob=new Blob([data.yaml],{type:'application/yaml;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=data.filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+ const controls=element('div',undefined,'resource-yaml-actions');controls.append(resourceButton('↓ Скачать YAML',save));$('lab-extra').prepend(controls);if(download)save();
+ }catch(e){if(output.isConnected)output.textContent='Не удалось получить YAML: '+e.message}
+}

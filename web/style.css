@@ -65,3 +65,5 @@
 .apps-bulk{flex-wrap:wrap}
 
 #resources .resource-toolbar>.resource-tabs{flex-wrap:wrap;width:100%;box-sizing:border-box}#resource-detail .pvc-details dd{white-space:pre-wrap;overflow-wrap:anywhere}
+
+.resource-yaml-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.resource-yaml-actions .button{font-size:11px;padding:8px 10px}.resource-yaml-output{background:#152e31;color:#d6e5dc;padding:18px;border-radius:12px;max-height:55vh;overflow:auto;font:12px/1.6 monospace;white-space:pre;tab-size:2}

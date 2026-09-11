@@ -519,7 +519,7 @@ class Handler(BaseHTTPRequestHandler):
         global JOB, STOPPING
         if not self.allowed():
             return
-        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods', '/api/app-access'):
+        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods', '/api/app-access', '/api/resource-yaml'):
             return self.reply(404, {'error': 'Не найдено'})
         try:
             length = int(self.headers.get('Content-Length', 0))
@@ -545,6 +545,8 @@ class Handler(BaseHTTPRequestHandler):
                     if operation=='from_apps':return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).template_from_apps(data))
                     if operation!='save':raise ValueError('Неизвестная операция с шаблоном')
                     return self.reply(200, lab_apps.save_template(data))
+            if self.path == '/api/resource-yaml':
+                return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).resource_yaml(data))
             if self.path == '/api/app-access':
                 return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).access(data))
             if self.path == '/api/pods':
