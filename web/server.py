@@ -78,9 +78,21 @@ def check_cluster_network(network, exclude=None):
     finally:
         CONTEXT.root = previous
 
+def profile_in_use(name):
+    previous = active_root()
+    try:
+        root = cluster_root(name)
+        CONTEXT.root = root
+        return bool(config()['nodes']) or any((root / '.vagrant/machines').glob('*/*/id'))
+    except Exception:
+        return True  # Never reuse a profile whose state cannot be read.
+    finally:
+        CONTEXT.root = previous
+
 def next_cluster_name():
-    used = set(cluster_names())
-    index = 2  # The default profile is cluster1.
+    used = {('k8s-cluster1' if name == 'default' else name)
+            for name in cluster_names() if profile_in_use(name)}
+    index = 1
     while 'k8s-cluster' + str(index) in used:
         index += 1
     return 'k8s-cluster' + str(index)
@@ -96,7 +108,7 @@ def new_cluster(name, cidr, params=None):
     folder = ROOT / '.clusters'
     folder.mkdir(exist_ok=True, mode=0o700)
     target = folder / name
-    if target.exists():
+    if target.exists() and profile_in_use(name):
         raise ValueError('Такое имя уже существует')
     temp = Path(tempfile.mkdtemp(prefix='.new-', dir=folder))
     try:
@@ -119,7 +131,19 @@ def new_cluster(name, cidr, params=None):
             proc = subprocess.run(['ruby', '-e', plan], cwd=temp, input=json.dumps(dict(params, network_mode='existing')), capture_output=True, text=True)
             if proc.returncode:
                 raise ValueError('Проверьте параметры кластера: ' + proc.stderr.strip())
-        temp.rename(target)
+        archived = None
+        if target.exists():
+            # Preserve deleted profile settings/history before reusing its name.
+            archive_root = ROOT / '.cache/archived-profiles'
+            archive_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            archived = Path(tempfile.mkdtemp(prefix=name + '-', dir=archive_root)) / 'profile'
+            target.rename(archived)
+        try:
+            temp.rename(target)
+        except OSError:
+            if archived is not None:
+                archived.rename(target)
+            raise
     finally:
         if temp.exists(): shutil.rmtree(temp)
     return {'name': name}

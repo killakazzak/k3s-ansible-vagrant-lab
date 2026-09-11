@@ -150,6 +150,22 @@ class ClusterIsolationTests(unittest.TestCase):
                 with self.assertRaises(ValueError): app.cluster_root('../escape')
                 env = app.cluster_env(profile)
                 self.assertEqual(env['VAGRANT_DOTFILE_PATH'], str(profile / '.vagrant'))
+                # Remove all inventory entries and VM state, then reuse number 1.
+                empty = 'all:\n  children:\n    server:\n      hosts: {}\n    workers:\n      hosts: {}\n'
+                (root / 'ansible/inventory.yml').write_text(empty)
+                (profile / 'ansible/inventory.yml').write_text(empty)
+                vm_id.unlink()
+                self.assertEqual(app.next_cluster_name(), 'k8s-cluster1')
+                app.new_cluster('', net, params)
+                first = root / '.clusters/k8s-cluster1'
+                self.assertEqual(app.next_cluster_name(), 'k8s-cluster2')
+                (first / 'ansible/inventory.yml').write_text(empty)
+                (first / 'saved-history.txt').write_text('keep')
+                app.new_cluster('', net, params)
+                self.assertTrue(first.exists())
+                backups = list((root / '.cache/archived-profiles').glob('k8s-cluster1-*/profile/saved-history.txt'))
+                self.assertEqual(len(backups), 1)
+                self.assertEqual(backups[0].read_text(), 'keep')
             app.CONTEXT.root = app.ROOT
     def test_deleted_vms_are_not_reported_as_cluster(self):
         cfg = {'nodes':[{'name':'one','vagrant_id':'one'}]}

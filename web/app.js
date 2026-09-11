@@ -146,7 +146,7 @@ $('create-cluster').onclick=()=>{ $('new-cluster').click(); };
 $('new-cluster').onclick=()=>{
   currentAction='new_cluster';$('fields').replaceChildren();$('form-error').hidden=true;
   $('modal-title').textContent='Новый кластер';$('modal-description').textContent='Выберите имя, сеть и ресурсы. Кластер сохранится и начнёт создаваться только после нажатия «Подтвердить».';
-  field('name','Имя кластера — автоматически, если оставить пустым');$('field-name').required=false;$('field-name').placeholder='k8s-cluster2, k8s-cluster3, …';field('network','Отдельная подсеть /24, например 192.168.59.0/24');
+  field('name','Имя кластера — автоматически, если оставить пустым');$('field-name').required=false;$('field-name').placeholder='Первый свободный номер: k8s-cluster1, k8s-cluster2, …';field('network','Отдельная подсеть /24, например 192.168.59.0/24');
   field('masters','Количество master',1,'number',1,7);field('workers','Количество workers',2,'number',1,32);
   for(const role of ['server','workers']){
     const n=state.defaults[role];
