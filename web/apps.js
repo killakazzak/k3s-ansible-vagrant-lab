@@ -28,8 +28,17 @@ function openCatalog(){
 }
 $('catalog-open').onclick=openCatalog;
 $('template-catalog').onclick=openCatalog;
-async function loadTemplates(){try{savedTemplates=await api('templates');const old=$('template-list').value;$('template-list').replaceChildren();$('template-empty').hidden=!!savedTemplates.length;$('template-picker').hidden=!savedTemplates.length;$('template-list').disabled=!savedTemplates.length;$('template-hint').textContent=savedTemplates.length?'Готовые наборы приложений для выбранного кластера.':'Сохраните набор приложений в каталоге — он появится здесь.';for(const t of savedTemplates){const o=element('option',t.name+' · '+t.apps.length+' приложений');o.value=t.name;$('template-list').append(o)}if(savedTemplates.some(t=>t.name===old))$('template-list').value=old;}catch(e){$('apps-message').textContent=e.message}}
-$('template-run').onclick=()=>{const t=savedTemplates.find(t=>t.name===$('template-list').value);if(!t)return;labOpen('Развернуть «'+t.name+'»','Кластер: '+selectedCluster+'. '+t.apps.map(a=>a.name+' ('+a.type+')').join(', ')+'. К префиксам URL добавится namespace и адрес кластера; полные hostname сохранятся.',data=>labAction('template_deploy',{template:t.name,namespace:data.namespace}));labField('namespace','Namespace для всех приложений','dev');};
+function renderTemplateCards(){
+ const area=$('template-cards');area.replaceChildren();
+ for(const t of savedTemplates){
+  const card=element('article',undefined,'saved-template');const head=element('div',undefined,'saved-template-head');head.append(element('span','▱','saved-template-icon'),element('h4',t.name));
+  const n=t.apps.length;const word=n%10===1&&n%100!==11?'приложение':n%10>=2&&n%10<=4&&(n%100<12||n%100>14)?'приложения':'приложений';head.append(element('span',n+' '+word,'saved-template-count'));card.append(head);
+  const list=element('div',undefined,'saved-template-apps');for(const app of t.apps){const chip=element('span',app.name);chip.title=app.image;list.append(chip)}card.append(list);
+  const actions=element('div',undefined,'saved-template-actions');const run=element('button','Развернуть →','button primary');run.disabled=busy;run.dataset.templateRun='true';run.onclick=()=>runTemplate(t);const del=element('button','Удалить','button secondary');del.onclick=()=>deleteTemplate(t.name);actions.append(run,del);card.append(actions);area.append(card);
+ }
+}
+async function loadTemplates(){try{const values=await api('templates');const changed=JSON.stringify(values)!==JSON.stringify(savedTemplates);savedTemplates=values;$('template-empty').hidden=!!savedTemplates.length;$('template-hint').textContent=savedTemplates.length?'Выберите готовый набор для развёртывания.':'Сохраните набор приложений в каталоге — он появится здесь.';if(changed||!$('template-cards').children.length)renderTemplateCards();}catch(e){$('apps-message').textContent=e.message}}
+function runTemplate(t){labOpen('Развернуть «'+t.name+'»','Кластер: '+selectedCluster+'. '+t.apps.map(a=>a.name+' ('+a.type+')').join(', ')+'. К префиксам URL добавится namespace и адрес кластера; полные hostname сохранятся.',data=>labAction('template_deploy',{template:t.name,namespace:data.namespace}));labField('namespace','Namespace для всех приложений','dev');};
 function openUpdate(app){labOpen('Версия и реплики · '+app.name,'Кластер '+selectedCluster+', namespace '+app.namespace+'. Обновление образа выполняется постепенно. PVC сохраняются. Смена major PostgreSQL здесь недоступна.',data=>labAction('app_update',{...data,kind:app.kind,name:app.name,namespace:app.namespace}));const input=labField('container','Контейнер',app.containers[0].name,'text',app.containers.map(c=>c.name));labField('image','Новый образ с тегом',app.containers[0].image);labField('replicas','Число реплик (0 — остановить приложение)',app.replicas,'number');input.onchange=()=>{$('lab-image').value=app.containers.find(c=>c.name===input.value).image};}
 function appConfirm(app,action){labOpen(action==='app_rollback'?'Откатить '+app.name:'Проверить '+app.name,action==='app_rollback'?'Возврат к предыдущей ревизии шаблона Pod. Реплики и данные на диске не откатываются.':'Проверим готовность, DNS и Service. Для приложений каталога — также PostgreSQL SELECT 1 или Redis PING; при наличии HTTP Ingress проверим URL.',()=>labAction(action,{kind:app.kind,name:app.name,namespace:app.namespace}));}
 async function refreshApps(){
@@ -78,7 +87,7 @@ async function openAppPods(app){
  try{const pods=await api('pods',{name:app.name,namespace:app.namespace,kind:app.kind});if(!$('lab-dialog').open||labCluster!==selectedCluster)return;if(!pods.length)$('lab-extra').append(element('p','Подов нет. Проверьте число реплик.'));for(const pod of pods){const b=element('button',pod.name+' · '+pod.phase,'button secondary');b.type='button';b.onclick=()=>showPodDiagnostics(pod);$('lab-extra').append(b)}}catch(e){labError(e)}
 }
 
-setInterval(()=>{for(const id of ['stand-stop','stand-start'])$(id).disabled=busy||!state?.nodes.length;$('template-run').disabled=busy||!savedTemplates.length;if(labSubmit)$('lab-submit').disabled=busy;},1000);
+setInterval(()=>{for(const id of ['stand-stop','stand-start'])$(id).disabled=busy||!state?.nodes.length;document.querySelectorAll('[data-template-run]').forEach(b=>b.disabled=busy);if(labSubmit)$('lab-submit').disabled=busy;},1000);
 
 async function showAppAccess(app){
  labOpen('Доступ · '+app.name,'Ссылки и учётные данные выбранного приложения.',null);
@@ -135,7 +144,7 @@ async function refreshSecrets(){const cluster=selectedCluster;try{const data=awa
 $('secret-namespace').onchange=()=>{secretNamespaces.set(selectedCluster,$('secret-namespace').value);renderSecrets()};
 $('secret-refresh').onclick=refreshSecrets;$('cluster-select').addEventListener('change',()=>{secretData=[];$('secret-list').replaceChildren();refreshSecrets()});setInterval(()=>{if(!document.hidden)refreshSecrets()},15000);refreshSecrets();
 
-$('template-delete').onclick=()=>{const name=$('template-list').value;if(!name)return;labOpen('Удалить шаблон «'+name+'»?','Будет удалён только сохранённый набор. Установленные приложения и их данные сохранятся.',async()=>{await api('templates',{operation:'delete',name});$('lab-dialog').close();await loadTemplates()})};
+function deleteTemplate(name){labOpen('Удалить шаблон «'+name+'»?','Будет удалён только сохранённый набор. Установленные приложения и их данные сохранятся.',async()=>{await api('templates',{operation:'delete',name});$('lab-dialog').close();await loadTemplates()})};
 $('template-from-apps').onclick=async()=>{
  const cluster=selectedCluster;
  try{const apps=(await api('apps')).filter(a=>a.managed);if(cluster!==selectedCluster)return;
