@@ -137,3 +137,50 @@ function drawPlacement(){
 }
 $('pod-filter').oninput=drawPlacement;
 $('pod-namespace').onchange=()=>{placementNamespaces.set(selectedCluster,$('pod-namespace').value);drawPlacement()};
+
+// Compact resource browser shares existing polling data; it does not fetch secrets' values.
+let resourceTab='pods',resourceView='table',resourceSignature='',resourceSelected=null;
+const resourceFilters=new Map();
+function resourceItems(){return {pods:graphCluster===selectedCluster?(graphData?.pods||[]):[],pvcs:pvcData,secrets:secretData};}
+function resourceKey(p){return p.namespace+'/'+p.name;}
+function resourceFilter(){if(!resourceFilters.has(selectedCluster))resourceFilters.set(selectedCluster,{namespace:'',search:''});return resourceFilters.get(selectedCluster);}
+function resourceButton(label,fn,cls='button secondary'){const b=element('button',label,cls);b.type='button';b.onclick=fn;return b;}
+function showResource(type,item){resourceSelected={type,key:resourceKey(item),cluster:selectedCluster};renderResourceDetail(item);renderResources(true);}
+function renderResourceDetail(item){
+ const body=$('resource-detail-body');body.replaceChildren();$('resource-detail').hidden=false;
+ if(resourceSelected.type==='pvcs'){body.append(renderPVC(item));for(const name of item.pods){const pod=resourceItems().pods.find(p=>p.namespace===item.namespace&&p.name===name);if(pod)body.append(resourceButton('Pod → '+name,()=>showResource('pods',pod)))}return;}
+ body.append(element('h3',item.name),element('span',item.namespace,'pvc-namespace-badge'));
+ const list=element('dl',undefined,'pvc-details');const entry=(label,value)=>list.append(element('dt',label),element('dd',value||'—'));
+ if(resourceSelected.type==='secrets'){entry('Тип',item.type);entry('Ключи',item.keys.join(', '));entry('password',item.hasPassword?'Есть':'Нет');body.append(list,element('p','Значения скрыты. Для подключения базы выберите этот Secret в форме приложения.','panelnote'));return;}
+ entry('Статус',item.ready?'Ready':item.phase);entry('Узел',item.node||'Не назначен');entry('IP',item.ip);entry('Владелец',workloadLabel(item));entry('Создан',item.created?new Date(item.created).toLocaleString():'—');entry('QoS',item.qos);entry('Рестарты',String((item.statuses||[]).reduce((a,c)=>a+c.restarts,0)));body.append(list);
+ for(const c of item.containers||[]){const block=element('div',undefined,'resource-container');block.append(element('strong',c.name),element('code',c.image));const r=c.resources||{};block.append(element('p','Requests: CPU '+(r.requests?.cpu||'—')+' / RAM '+(r.requests?.memory||'—')),element('p','Limits: CPU '+(r.limits?.cpu||'—')+' / RAM '+(r.limits?.memory||'—')));body.append(block)}
+ for(const v of item.volumes||[]){if(!v.claim)continue;const pvc=pvcData.find(p=>p.namespace===item.namespace&&p.name===v.claim);body.append(resourceButton('PVC → '+v.claim,()=>{if(pvc)showResource('pvcs',pvc)},'button secondary'))}
+ body.append(resourceButton('Логи, события и терминал',()=>showPodDiagnostics(item),'button primary'));
+ const extra=document.createElement('details');extra.append(element('summary','Состояния контейнеров и метки'),element('pre',JSON.stringify({statuses:item.statuses,labels:item.labels},null,2),'diagnostic-output'));body.append(extra);
+}
+function renderResources(force=false){
+ const sets=resourceItems(),filter=resourceFilter();const signature=JSON.stringify([selectedCluster,resourceTab,resourceView,filter,sets]);if(!force&&signature===resourceSignature)return;resourceSignature=signature;
+ const namespaces=[...new Set(Object.values(sets).flat().map(p=>p.namespace))].sort();const select=$('resource-namespace');select.replaceChildren();for(const ns of ['',...new Set([...namespaces,...(filter.namespace?[filter.namespace]:[])])]){const o=element('option',ns||'Все (All)');o.value=ns;select.append(o)}select.value=filter.namespace;if($('resource-search').value!==filter.search)$('resource-search').value=filter.search;
+ for(const [type,label] of [['pods','Pods'],['pvcs','PVC'],['secrets','Secrets']]){const tab=$('resource-tab-'+type);tab.textContent=label+' · '+sets[type].filter(p=>!filter.namespace||p.namespace===filter.namespace).length;tab.setAttribute('aria-selected',String(type===resourceTab));tab.tabIndex=type===resourceTab?0:-1;}
+ $('resource-view-controls').hidden=resourceTab!=='pods';$('resource-table-view').setAttribute('aria-pressed',String(resourceView==='table'));$('resource-map-view').setAttribute('aria-pressed',String(resourceView==='map'));
+ const query=filter.search.toLowerCase();const items=sets[resourceTab].filter(p=>(!filter.namespace||p.namespace===filter.namespace)&&JSON.stringify(p).toLowerCase().includes(query));const content=$('resource-content');content.replaceChildren();
+ $('resource-summary').textContent=`${items.length} из ${sets[resourceTab].length} · автообновление 15 с`;
+ const errorText=resourceTab==='pods'?(!graphData?$('graph-status').textContent:''):resourceTab==='pvcs'?$('pvc-list').textContent:$('secret-list').textContent;
+ if(!items.length){content.append(element('p','Ресурсов по выбранным фильтрам нет.','resource-empty'));if(errorText&&/недоступ|ошиб|token|отказ/i.test(errorText))content.append(element('p',errorText,'error'));}
+ else if(resourceTab==='pods'&&resourceView==='map'){
+  const map=element('div',undefined,'resource-map');const groups=[...new Set(items.map(p=>p.node||'Не назначен'))];for(const node of groups){const column=element('article',undefined,'placement-node');column.append(element('h3',node));for(const p of items.filter(p=>(p.node||'Не назначен')===node)){const b=resourceButton('',()=>showResource('pods',p),'placement-pod '+(p.ready?'ready':'waiting'));b.append(element('strong',p.name),element('span',p.namespace+' · '+(p.ready?'Ready':p.phase)));column.append(b)}map.append(column)}content.append(map);
+ }else{
+  const table=document.createElement('table');table.className='resource-table';const head=document.createElement('thead'),tr=document.createElement('tr');const headers=resourceTab==='pods'?['Имя','Namespace','Статус','Узел','Рестарты']:resourceTab==='pvcs'?['Имя','Namespace','Размер','Статус','Сервер']:['Имя','Namespace','Тип','Ключи'];for(const h of headers)tr.append(element('th',h));head.append(tr);table.append(head);const tbody=document.createElement('tbody');
+  for(const p of items){const row=document.createElement('tr');if(resourceSelected?.cluster===selectedCluster&&resourceSelected.type===resourceTab&&resourceSelected.key===resourceKey(p))row.className='selected';const name=document.createElement('td');name.append(resourceButton(p.name,()=>showResource(resourceTab,p),'resource-name'));row.append(name);const values=resourceTab==='pods'?[p.namespace,p.ready?'Ready':p.phase,p.node||'Не назначен',String((p.statuses||[]).reduce((a,c)=>a+c.restarts,0))]:resourceTab==='pvcs'?[p.namespace,p.capacity,p.phase,p.location?.server||(p.location?.nodes||[]).map(n=>n.name).join(', ')||'—']:[p.namespace,p.type,p.keys.join(', ')];for(const value of values){const td=element('td',value);if(value==='Ready'||value==='Bound')td.className='resource-ok';row.append(td)}row.onclick=e=>{if(!e.target.closest('button'))showResource(resourceTab,p)};tbody.append(row)}table.append(tbody);content.append(table);
+ }
+ if(resourceSelected){const selected=resourceSelected.cluster===selectedCluster&&sets[resourceSelected.type].find(p=>resourceKey(p)===resourceSelected.key);if(!selected){resourceSelected=null;$('resource-detail').hidden=true}else renderResourceDetail(selected);}
+}
+for(const type of ['pods','pvcs','secrets'])$('resource-tab-'+type).onclick=()=>{resourceTab=type;resourceSelected=null;$('resource-detail').hidden=true;renderResources(true)};
+const resourceTabs=['pods','pvcs','secrets'];for(const type of resourceTabs)$('resource-tab-'+type).onkeydown=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const index=e.key==='Home'?0:e.key==='End'?2:(resourceTabs.indexOf(type)+(e.key==='ArrowRight'?1:2))%3;const b=$('resource-tab-'+resourceTabs[index]);b.click();b.focus()};
+$('resource-detail-close').onclick=()=>{resourceSelected=null;$('resource-detail').hidden=true;renderResources(true)};
+$('resource-namespace').onchange=()=>{resourceFilter().namespace=$('resource-namespace').value;renderResources(true)};
+$('resource-search').oninput=()=>{resourceFilter().search=$('resource-search').value;renderResources(true)};
+$('resource-table-view').onclick=()=>{resourceView='table';renderResources(true)};$('resource-map-view').onclick=()=>{resourceView='map';renderResources(true)};
+$('resources-refresh').onclick=async()=>{const b=$('resources-refresh');b.disabled=true;try{await Promise.allSettled([refreshGraph(),refreshPVCs(),refreshSecrets()]);renderResources(true)}finally{b.disabled=false}};
+$('cluster-select').addEventListener('change',()=>{resourceSelected=null;$('resource-detail').hidden=true;renderResources(true)});
+setInterval(()=>{if(!document.hidden)renderResources()},2000);renderResources();
