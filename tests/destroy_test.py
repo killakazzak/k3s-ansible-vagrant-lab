@@ -10,7 +10,9 @@ class DestroyTests(unittest.TestCase):
                 shutil.copytree(ROOT/'ansible',root/'ansible')
                 (root/'bin').mkdir()
                 fake=root/'bin/vagrant';fake.write_text('#!/bin/sh\nexit '+str(code)+'\n');fake.chmod(0o755)
-                inv=root/'ansible/inventory.yml';original=inv.read_bytes()
+                inv=root/'ansible/inventory.yml'
+                inv.write_text(json.dumps({'all':{'children':{'server':{'hosts':{'master':{'ansible_host':'192.168.58.11','vagrant_id':'master'}}},'workers':{'hosts':{'worker':{'ansible_host':'192.168.58.21','vagrant_id':'worker'}}}}}}))
+                original=inv.read_bytes()
                 result=subprocess.run(['ruby','scripts/destroy-cluster.rb'],cwd=root,env=dict(os.environ,PATH=str(root/'bin')+':'+os.environ['PATH']),capture_output=True)
                 if code:
                     self.assertNotEqual(result.returncode,0)
