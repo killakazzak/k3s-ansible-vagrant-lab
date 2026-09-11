@@ -320,7 +320,18 @@ class ClusterMenu
   end
 
   def list_clusters
-    profiles = cluster_profiles
+    profiles = cluster_profiles.select do |_, path|
+      begin
+        data = YAML.load_file(File.join(path, 'ansible/inventory.yml'))
+        data.fetch('all').fetch('children').values.any? { |group| !group.fetch('hosts', {}).empty? }
+      rescue StandardError
+        true # Keep unreadable profiles available for diagnosis.
+      end
+    end
+    if profiles.empty?
+      puts 'Нет кластеров. Для создания выберите пункт 1.'
+      return profiles
+    end
     puts "\nКластеры — сохранённые профили (наличие kubeconfig не означает доступность API):"
     profiles.each_with_index do |(name, path), index|
       ready = File.file?(File.join(path, 'kubeconfig')) && File.size(File.join(path, 'kubeconfig')) > 0
@@ -333,6 +344,7 @@ class ClusterMenu
 
   def connect_kubectl
     profiles = list_clusters
+    return if profiles.empty?
     value = ask('Номер кластера для kubectl (0 — отмена)')
     return if value == '0'
     raise 'Неверный номер кластера' unless value.match?(/\A[1-9]\d*\z/) && value.to_i <= profiles.length
