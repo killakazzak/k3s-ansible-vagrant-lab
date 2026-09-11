@@ -88,10 +88,58 @@ class Apps:
             if ns in PROTECTED or ns.startswith(('kube-','cattle-')):continue
             if m.get('labels',{}).get('lab.k3s/panel-for'):continue
             containers=obj['spec']['template']['spec']['containers']
-            out.append(dict(name=m['name'],namespace=ns,kind=obj['kind'],replicas=obj['spec'].get('replicas',1),ready=obj.get('status',{}).get('readyReplicas',0),containers=[dict(name=c['name'],image=c['image']) for c in containers],managed=m.get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER,type=m.get('labels',{}).get('lab.k3s/type','custom')))
+            out.append(dict(name=m['name'],namespace=ns,kind=obj['kind'],replicas=obj['spec'].get('replicas',1),ready=obj.get('status',{}).get('readyReplicas',0),containers=[dict(name=c['name'],image=c['image']) for c in containers],managed=m.get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER,type=m.get('labels',{}).get('lab.k3s/type','custom'),check=self.check_result(obj)))
         for app in out:
             app['urls']=[{'title':i['metadata']['name'],'url':'http://'+r['host']+'/'} for i in routes if i['metadata'].get('namespace')==app['namespace'] for r in i.get('spec',{}).get('rules',[]) if r.get('host') and any(p.get('backend',{}).get('service',{}).get('name') in (app['name'],app['name']+'-ui') for p in r.get('http',{}).get('paths',[]))]
         return out
+    def check_result(self,obj):
+        try:data=json.loads((self.root/'.cache/app-checks.json').read_text()).get(obj['metadata']['uid'])
+        except (OSError,ValueError,KeyError):return None
+        if not data or data.get('generation')!=obj['metadata'].get('generation'):return None
+        if data['state']=='running' and time.time()-data['time']>900:return None
+        return data
+    def record_check(self,obj,state):
+        folder=self.root/'.cache';folder.mkdir(exist_ok=True);path=folder/'app-checks.json'
+        try:values=json.loads(path.read_text())
+        except (OSError,ValueError):values={}
+        values[obj['metadata']['uid']]={'state':state,'time':time.time(),'generation':obj['metadata'].get('generation')}
+        fd,temp=tempfile.mkstemp(dir=folder,prefix='app-check-')
+        try:
+            with os.fdopen(fd,'w') as out:json.dump(values,out)
+            os.replace(temp,path)
+        finally:
+            if os.path.exists(temp):os.unlink(temp)
+    def delete(self,data):
+        ns=namespace(data.get('namespace'),True);name=dns(data.get('name'));kind=data.get('kind')
+        if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный workload')
+        workload=self.get(kind,ns,name)
+        managed=workload['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER
+        delete_data=data.get('delete_data',False)
+        if not isinstance(delete_data,bool):raise ValueError('Некорректный выбор удаления данных')
+        objects=self.get('deployments,statefulsets,services,ingresses,configmaps,secrets',ns)['items']
+        try:objects+=self.get('middlewares.traefik.io',ns)['items']
+        except ValueError as e:
+            if "the server doesn't have a resource type" not in str(e):raise
+        selected=[]
+        for obj in objects:
+            m=obj['metadata'];labels=m.get('labels',{})
+            owned=managed and labels.get('app.kubernetes.io/managed-by')==MANAGER and (labels.get('app.kubernetes.io/name')==name or labels.get('lab.k3s/panel-for')==name)
+            if owned:selected.append((obj['kind'],m['name']))
+        # Older generated database Secrets have no ownership labels. Keep them with data.
+        if delete_data:
+            refs={e.get('valueFrom',{}).get('secretKeyRef',{}).get('name') for c in workload['spec']['template']['spec']['containers'] for e in c.get('env',[])}
+            if managed and name+'-auth' in refs:selected.append(('Secret',name+'-auth'))
+        else:selected=[o for o in selected if o!=('Secret',name+'-auth')]
+        self.kubectl(['delete',kind,name,'-n',ns,'--wait=true','--timeout=90s'],timeout=100)
+        for resource,n in selected:
+            if (resource,n)==(kind,name):continue
+            self.kubectl(['delete',resource,n,'-n',ns,'--ignore-not-found','--wait=false'])
+        if delete_data and kind=='StatefulSet':
+            claims=[v['metadata']['name'] for v in workload['spec'].get('volumeClaimTemplates',[])]
+            for pvc in self.get('pvc',ns)['items']:
+                n=pvc['metadata']['name']
+                if any(re.fullmatch(re.escape(claim+'-'+name+'-')+r'\d+',n) for claim in claims):self.kubectl(['delete','pvc',n,'-n',ns,'--wait=false'])
+        print(('Приложение и веб-панель удалены. ' if managed else 'Workload удалён; внешние Service/Ingress сохранены. ')+('PVC и пароль базы удалены.' if delete_data else 'PVC и пароль базы сохранены.'),flush=True)
     def access(self,data):
         ns=namespace(data.get('namespace'));name=dns(data.get('name'));kind=data.get('kind')
         if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный workload')
@@ -209,6 +257,13 @@ class Apps:
         if c['type']=='rabbitmq':print('RabbitMQ: пользователь app, пароль в Secret '+ns+'/'+name+'-auth (ключ password).',flush=True)
         if c['type']=='postgres':print('PostgreSQL: пользователь app, база app, пароль в Secret '+ns+'/'+name+'-auth (ключ password).',flush=True)
     def check(self,c,kind,host=''):
+        obj=self.get(kind,c['namespace'],c['name'])
+        self.record_check(obj,'running')
+        try:self._check(c,kind,host)
+        except Exception:
+            self.record_check(obj,'failed');raise
+        else:self.record_check(obj,'success')
+    def _check(self,c,kind,host=''):
         ns=c['namespace'];name=c['name'];target=kind.lower()+'/'+name
         print('TASK [Проверки: готовность, DNS, сеть и приложение]',flush=True)
         print(self.kubectl(['rollout','status',target,'-n',ns,'--timeout=180s'],timeout=190),flush=True)
@@ -275,7 +330,7 @@ class Apps:
                     if owned and not ready and differs:
                         self.kubectl(['delete','pod',pod['metadata']['name'],'-n',ns,'--wait=true','--timeout=60s'],timeout=70)
 
-        print(self.kubectl(['rollout','status',target,'-n',ns,'--timeout=180s'],timeout=190),flush=True)
+        if action!='app_check':print(self.kubectl(['rollout','status',target,'-n',ns,'--timeout=180s'],timeout=190),flush=True)
         if action=='app_check':
             service=self.get('service',ns,name)
             host=next((r.get('host','') for i in self.get('ingress',ns)['items'] for r in i.get('spec',{}).get('rules',[]) if any(p.get('backend',{}).get('service',{}).get('name')==name for p in r.get('http',{}).get('paths',[]))),'')

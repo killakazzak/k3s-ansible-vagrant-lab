@@ -90,3 +90,24 @@ class LabTests(unittest.TestCase):
    ui=next(o for o in objects if o['kind']=='Deployment' and o['metadata']['name']=='sample-ui')
    self.assertIn('sample.dev.svc.cluster.local',str(objects))
    if kind!='postgres':self.assertTrue(any(o['kind']=='Middleware' for o in objects))
+ def test_check_state_persists_and_invalidates(self):
+  with tempfile.TemporaryDirectory() as folder:
+   app=lab.Apps(folder);obj={'metadata':{'uid':'one','generation':1}}
+   app.record_check(obj,'success');self.assertEqual(lab.Apps(folder).check_result(obj)['state'],'success')
+   obj['metadata']['generation']=2;self.assertIsNone(app.check_result(obj))
+   app.record_check(obj,'failed');self.assertEqual(app.check_result(obj)['state'],'failed')
+ def test_delete_scope_and_preserve_data(self):
+  app=lab.Apps('/tmp');labels={'app.kubernetes.io/managed-by':lab.MANAGER,'app.kubernetes.io/name':'db'}
+  workload={'kind':'StatefulSet','metadata':{'name':'db','labels':labels},'spec':{'template':{'spec':{'containers':[]}},'volumeClaimTemplates':[{'metadata':{'name':'data'}}]}}
+  own={'kind':'Service','metadata':{'name':'db','labels':labels}};other={'kind':'Service','metadata':{'name':'other','labels':{'app.kubernetes.io/managed-by':lab.MANAGER,'app.kubernetes.io/name':'other'}}}
+  for remove in (False,True):
+   responses=[workload,{'items':[workload,own,other]},{'items':[]}]+([{'items':[{'metadata':{'name':'data-db-0'}},{'metadata':{'name':'data-other-0'}}]}] if remove else [])
+   with patch.object(app,'get',side_effect=responses),patch.object(app,'kubectl') as cmd:
+    app.delete({'kind':'StatefulSet','name':'db','namespace':'dev','delete_data':remove})
+    calls=[c.args[0] for c in cmd.call_args_list];self.assertTrue(any(c[:3]==['delete','Service','db'] for c in calls));self.assertFalse(any('other' in c or 'data-other-0' in c for c in calls));self.assertEqual(any('pvc' in c for c in calls),remove)
+ def test_failed_check_is_red(self):
+  with tempfile.TemporaryDirectory() as folder:
+   app=lab.Apps(folder);obj={'metadata':{'uid':'one','generation':1}}
+   with patch.object(app,'get',return_value=obj),patch.object(app,'_check',side_effect=ValueError('failure')):
+    with self.assertRaises(ValueError):app.check({'name':'web','namespace':'dev'},'Deployment')
+   self.assertEqual(app.check_result(obj)['state'],'failed')

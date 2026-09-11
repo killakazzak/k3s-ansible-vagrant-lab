@@ -29,8 +29,17 @@ def main():
         hosts=[p[3] for p in prepared if p[3]]
         if len(set(hosts))!=len(hosts):raise ValueError('Повторяются hostname приложений')
         for c,plan in zip(validated,prepared):apps.deploy(c,plan)
+    elif action=='app_delete':
+        apps.delete(params)
     elif action in ('app_update','app_rollback','app_check'):
-        print('TASK ['+action+']',flush=True);apps.change(params,action)
+        print('TASK ['+action+']',flush=True)
+        if action=='app_check':
+            obj=apps.get(params.get('kind'),namespace(params.get('namespace'),True),params.get('name'))
+            apps.record_check(obj,'running')
+            try:apps.change(params,action)
+            except Exception:
+                apps.record_check(obj,'failed');raise
+        else:apps.change(params,action)
     else:raise ValueError('Неизвестная операция')
 if __name__=='__main__':
     try:main()

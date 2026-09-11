@@ -208,9 +208,9 @@ def new_cluster(name, cidr, params=None):
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.Lock()
 JOB = None
-LAB_ACTIONS = {'app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
+LAB_ACTIONS = {'app_delete','app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
 ACTIONS = LAB_ACTIONS | {'create', 'destroy', 'verify', 'add_master', 'add_worker', 'remove_master', 'remove_worker', 'resources', 'version'}
-DESTRUCTIVE = {'destroy', 'remove_master', 'remove_worker', 'version'}
+DESTRUCTIVE = {'app_delete','destroy', 'remove_master', 'remove_worker', 'version'}
 
 
 def capture(args, timeout=15):
