@@ -30,13 +30,13 @@ module Creation
     cfg = settings
     raise 'Включите embedded etcd для нескольких master' if group == 'server' && !cfg['k3s_embedded_etcd']
     resources = {}
-    [['cpu', 'vm_cpus', 1, 32], ['ram', 'vm_memory_mb', cfg['rancher_enabled'] ? 4096 : 1024, 65536], ['disk', 'vm_disk_gb', 64, 2048]].each do |input, key, min, max|
-      default = cfg.fetch(key, {}).fetch(group, key == 'vm_disk_gb' ? 64 : min)
+    [['cpu', 'vm_cpus', 1, 32], ['ram', 'vm_memory_mb', cfg['rancher_enabled'] ? 4096 : 1024, 65536], ['disk', 'vm_disk_gb', 25, 2048]].each do |input, key, min, max|
+      default = cfg.fetch(key, {}).fetch(group, key == 'vm_disk_gb' ? 25 : min)
       value = params.fetch(input, default).to_s
       raise "#{input}: целое число #{min}–#{max}" unless value.match?(/\A[0-9]+\z/) && (min..max).cover?(value.to_i)
       resources[key] = value.to_i
     end
-    raise 'Диск больше 64 ГБ поддерживается только с VirtualBox' if resources['vm_disk_gb'] > 64 && cfg['vm_provider'] != 'virtualbox'
+    raise 'Диск больше 25 ГБ поддерживается только с VirtualBox' if resources['vm_disk_gb'] > 25 && cfg['vm_provider'] != 'virtualbox'
     add_node(group, group == 'server' ? 'master' : 'worker', resources)
   end
 
@@ -55,9 +55,9 @@ module Creation
     %w[server workers].each do |role|
       cpu[role] = int.call("#{role}_cpu", 1, 32)
       ram[role] = int.call("#{role}_ram", cfg['rancher_enabled'] ? 4096 : 1024, 65536)
-      disk[role] = int.call("#{role}_disk", 64, 2048)
+      disk[role] = int.call("#{role}_disk", 25, 2048)
     end
-    raise 'Диск больше 64 ГБ поддерживается только с VirtualBox' if cfg['vm_provider'] != 'virtualbox' && disk.values.any? { |v| v > 64 }
+    raise 'Диск больше 25 ГБ поддерживается только с VirtualBox' if cfg['vm_provider'] != 'virtualbox' && disk.values.any? { |v| v > 25 }
     first = hosts(old, 'server').values.first
     current = IPAddr.new(first ? "#{first['ansible_host']}/#{cfg['private_network_prefix']}" : cfg.fetch('private_network_cidr', '192.168.58.0/24'))
     mode = params.fetch('network_mode')
@@ -79,7 +79,7 @@ module Creation
     if existing
       unchanged = mode == 'existing' && masters == hosts(old,'server').size && workers == hosts(old,'workers').size
       old['all']['children'].each do |role,g|
-        unchanged &&= g['hosts'].values.all? { |h| h.fetch('vm_cpus',cfg['vm_cpus'][role]) == cpu[role] && h.fetch('vm_memory_mb',cfg['vm_memory_mb'][role]) == ram[role] && h.fetch('vm_disk_gb',cfg.fetch('vm_disk_gb',{}).fetch(role,64)) == disk[role] }
+        unchanged &&= g['hosts'].values.all? { |h| h.fetch('vm_cpus',cfg['vm_cpus'][role]) == cpu[role] && h.fetch('vm_memory_mb',cfg['vm_memory_mb'][role]) == ram[role] && h.fetch('vm_disk_gb',cfg.fetch('vm_disk_gb',{}).fetch(role,25)) == disk[role] }
       end
       raise 'В выбранном кластере уже есть VM. Для второго кластера нажмите «Новый кластер» и задайте отдельную подсеть. CPU/ОЗУ текущих узлов меняйте через «Настроить», состав — через добавление и удаление узлов. Для смены сети или диска требуется пересоздание выбранного кластера.' unless unchanged
       return [old, {}]

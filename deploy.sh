@@ -34,6 +34,10 @@ case "$(setting vm_provider)" in
     ;;
   *) echo 'Supported providers: virtualbox, parallels.' >&2; exit 1 ;;
 esac
+if [[ "$(setting vm_box)" == 'k8s-lab/ubuntu-24.04-25gb' ]]; then
+  [[ "$(setting vm_provider)" == virtualbox ]] || { echo 'The 25 GiB base box requires VirtualBox.' >&2; exit 1; }
+  "$ROOT/scripts/build-box-25.sh"
+fi
 # Keep kubectl compatible with the configured API instead of Homebrew's latest minor.
 kubernetes_version="$(setting k3s_version)"
 kubernetes_version="${kubernetes_version%%+*}"

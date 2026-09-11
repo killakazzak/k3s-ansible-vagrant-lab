@@ -25,9 +25,11 @@ Vagrant.configure("2") do |config|
   nodes.each do |role, hostname, host|
     config.vm.define host.fetch("vagrant_id") do |node|
       node.vm.hostname = hostname
-      disk_gb = host.fetch("vm_disk_gb", settings.fetch("vm_disk_gb", {}).fetch(role, 64))
-      raise "Disk must be 64–2048 GiB" unless disk_gb.is_a?(Integer) && (64..2048).cover?(disk_gb)
-      if disk_gb > 64
+      disk_gb = host.fetch("vm_disk_gb", settings.fetch("vm_disk_gb", {}).fetch(role, 25))
+      raise "Disk must be 25–2048 GiB" unless disk_gb.is_a?(Integer) && (25..2048).cover?(disk_gb)
+      base_disk_gb = settings.fetch('vm_box') == 'k8s-lab/ubuntu-24.04-25gb' ? 25 : 64
+      raise "Base box needs at least #{base_disk_gb} GiB; use the 25 GiB box for smaller disks" if disk_gb < base_disk_gb
+      if disk_gb > base_disk_gb
         raise "Custom disk size requires VirtualBox" unless settings.fetch("vm_provider") == "virtualbox"
         node.vm.disk :disk, size: "#{disk_gb}GB", primary: true
       end

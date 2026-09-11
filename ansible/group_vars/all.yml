@@ -1,7 +1,7 @@
 # Plain YAML values below are also read by Vagrant/deploy.sh.
 vm_provider: virtualbox
-vm_box: bento/ubuntu-24.04
-vm_box_version: '202510.26.0'
+vm_box: k8s-lab/ubuntu-24.04-25gb
+vm_box_version: '0'
 vm_architecture: arm64
 vm_name_prefix: ''
 vm_cpus: {server: 2, workers: 2}
@@ -84,5 +84,5 @@ traefik_dashboard_username: admin
 # First image downloads can take more than ten minutes on a slow registry connection.
 bootstrap_rollout_timeout: 1200
 
-# Minimum boot disk size of the pinned Bento box is 64 GiB.
-vm_disk_gb: {server: 64, workers: 64}
+# Fresh Ubuntu base image with a 25 GiB boot disk; built locally on first deploy.
+vm_disk_gb: {server: 25, workers: 25}

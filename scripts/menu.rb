@@ -53,7 +53,7 @@ class ClusterMenu
       %w[server workers].each do |role|
         params[role+'_cpu'] = cfg['vm_cpus'][role]
         params[role+'_ram'] = cfg['vm_memory_mb'][role]
-        params[role+'_disk'] = cfg.fetch('vm_disk_gb',{}).fetch(role,64)
+        params[role+'_disk'] = cfg.fetch('vm_disk_gb',{}).fetch(role,25)
       end
       return unless confirm('Создать новый кластер с указанным числом узлов и ресурсами по умолчанию?')
       return create_with_resources(params)

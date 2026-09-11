@@ -132,8 +132,8 @@ def config():
             nodes.append(dict(name=name, role=role, ip=host['ansible_host'],
                               cpu=host.get('vm_cpus', cfg['vm_cpus'][role]),
                               ram=host.get('vm_memory_mb', cfg['vm_memory_mb'][role]),
-                              disk=host.get('vm_disk_gb', cfg.get('vm_disk_gb', {}).get(role,64)), vagrant_id=host['vagrant_id']))
-    return dict(node_prefix=('k8s-cluster1' if cfg.get('menu_node_prefix', 'k3s') == 'k3s' else cfg['menu_node_prefix']), nodes=nodes, defaults={role:dict(cpu=cfg['vm_cpus'][role],ram=cfg['vm_memory_mb'][role],disk=cfg.get('vm_disk_gb',{}).get(role,64)) for role in ['server','workers']}, network=str(ipaddress.ip_network(str(nodes[0]['ip'])+'/'+str(cfg['private_network_prefix']) if nodes else cfg.get('private_network_cidr','192.168.58.0/24'), strict=False)), version=cfg['k3s_version'], provider=cfg['vm_provider'],
+                              disk=host.get('vm_disk_gb', cfg.get('vm_disk_gb', {}).get(role,25)), vagrant_id=host['vagrant_id']))
+    return dict(node_prefix=('k8s-cluster1' if cfg.get('menu_node_prefix', 'k3s') == 'k3s' else cfg['menu_node_prefix']), nodes=nodes, defaults={role:dict(cpu=cfg['vm_cpus'][role],ram=cfg['vm_memory_mb'][role],disk=cfg.get('vm_disk_gb',{}).get(role,25)) for role in ['server','workers']}, network=str(ipaddress.ip_network(str(nodes[0]['ip'])+'/'+str(cfg['private_network_prefix']) if nodes else cfg.get('private_network_cidr','192.168.58.0/24'), strict=False)), version=cfg['k3s_version'], provider=cfg['vm_provider'],
                 rancher=cfg.get('rancher_enabled', False), traefik=cfg.get('traefik_dashboard_enabled', False)
                 and 'traefik' not in cfg['disabled_components'])
 
