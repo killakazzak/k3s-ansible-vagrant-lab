@@ -3,6 +3,7 @@
 import argparse
 import re
 import shutil
+import shlex
 import tempfile
 import base64
 import ipaddress
@@ -38,6 +39,56 @@ def cluster_root(name):
     if not path.is_dir() or path.is_symlink():
         raise ValueError('Кластер не найден')
     return path
+
+def run_kubectl(command):
+    if not isinstance(command, str) or len(command) > 4096:
+        raise ValueError('Введите команду kubectl длиной до 4096 символов.')
+    args = shlex.split(command)
+    if args and args[0] == 'kubectl':
+        args.pop(0)
+    verbs = {'get', 'describe', 'logs', 'top', 'version', 'api-resources',
+             'api-versions', 'explain', 'auth', 'delete', 'scale', 'rollout',
+             'label', 'annotate', 'cordon', 'uncordon', 'taint', 'wait'}
+    if not args or args[0] not in verbs:
+        raise ValueError('Поддерживаются get, describe, logs, top, explain, auth, delete, scale, rollout, label, annotate, cordon, uncordon, taint и wait. Интерактивные команды запускайте в обычном терминале.')
+    blocked = {'--kubeconfig', '--context', '--server', '-s', '--token', '--username',
+               '--password', '--user', '--cluster', '--client-key', '--client-certificate', '--certificate-authority',
+               '--proxy-url', '--request-timeout', '--filename', '-f', '--kustomize', '-k',
+               '--watch', '-w', '--watch-only', '--follow', '--log-file', '--log-dir',
+               '--profile', '--profile-output', '--cache-dir'}
+    for arg in args[1:]:
+        flag = arg.split('=', 1)[0]
+        if flag in blocked or (arg.startswith('-') and not arg.startswith('--') and len(arg) > 2 and arg[1] in 'sfkw'):
+            raise ValueError('Этот параметр недоступен в веб-консоли: ' + flag)
+        if arg in {'|', '||', '&&', ';', '>', '>>', '<', '&'}:
+            raise ValueError('Вводите одну команду kubectl без операторов shell.')
+    if args[0] == 'get' and any('template-file' in a or 'jsonpath-file' in a for a in args):
+        raise ValueError('Чтение локальных файлов в веб-консоли недоступно.')
+    root = active_root()
+    kubeconfig = root / 'kubeconfig'
+    if kubeconfig.is_symlink() or not kubeconfig.is_file() or not kubeconfig.stat().st_size:
+        raise ValueError('Подключение пока не готово. Дождитесь завершения создания кластера — kubectl подключится автоматически.')
+    binary = next((str(p) for p in (root / '.tools/kubectl', ROOT / '.tools/kubectl') if p.is_file() and os.access(p, os.X_OK)), None)
+    binary = binary or shutil.which('kubectl', path=ENV['PATH'])
+    if not binary:
+        raise ValueError('kubectl пока не установлен. Завершите развёртывание кластера.')
+    with tempfile.TemporaryFile() as output:
+        try:
+            result = subprocess.run([binary, '--kubeconfig=' + str(kubeconfig), '--request-timeout=30s'] + args,
+                                    cwd=root, env=cluster_env(root), stdin=subprocess.DEVNULL,
+                                    stdout=output, stderr=subprocess.STDOUT, timeout=60)
+            code = result.returncode
+        except subprocess.TimeoutExpired:
+            code = 124
+        output.seek(0, 2)
+        size = output.tell()
+        output.seek(max(0, size - 65536))
+        text = output.read().decode('utf-8', errors='replace')
+    if size > 65536:
+        text = '[Показаны последние 64 КБ вывода]\n' + text
+    if code == 124:
+        text += '\nКоманда остановлена: превышено время ожидания (60 секунд).'
+    return {'output': text, 'exit_code': code}
 
 def cluster_names():
     folder = ROOT / '.clusters'
@@ -388,13 +439,17 @@ class Handler(BaseHTTPRequestHandler):
         global JOB
         if not self.allowed():
             return
-        if self.path not in ('/api/action', '/api/clusters'):
+        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl'):
             return self.reply(404, {'error': 'Не найдено'})
         try:
             length = int(self.headers.get('Content-Length', 0))
             if not 0 < length <= 8192:
                 raise ValueError('Некорректный размер запроса')
             data = json.loads(self.rfile.read(length))
+            if not isinstance(data, dict):
+                raise ValueError('Некорректный запрос')
+            if self.path == '/api/kubectl':
+                return self.reply(200, run_kubectl(data.get('command')))
             if self.path == '/api/clusters':
                 if data.get('confirmed') is not True or not isinstance(data.get('params'), dict):
                     raise ValueError('Подтвердите создание кластера с выбранными параметрами')

@@ -27,6 +27,35 @@ class ConsoleTests(unittest.TestCase):
         try:
             with urlopen(req) as response: return response.status, response.read()
         except HTTPError as e: return e.code, e.read()
+    def test_kubectl_auth_and_validation(self):
+        self.assertEqual(self.request('/api/kubectl', {'command':'kubectl get nodes'}, token=False)[0], 401)
+        for command in ['sh whoami', 'kubectl get nodes --kubeconfig=/tmp/other', 'kubectl get nodes -shttp://other', 'kubectl get pods | cat', 'kubectl logs pod -f', 'kubectl get pods -o=jsonpath-file=/tmp/file']:
+            with patch.object(app.subprocess, 'run') as run:
+                self.assertEqual(self.request('/api/kubectl', {'command':command})[0], 400)
+                run.assert_not_called()
+
+    def test_kubectl_selected_profile_and_missing_config(self):
+        import tempfile
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory, patch.object(app, 'ROOT', Path(directory)):
+            profile = Path(directory) / '.clusters/test'
+            profile.mkdir(parents=True)
+            headers = {'X-Lab-Cluster':'test'}
+            self.assertEqual(self.request('/api/kubectl', {'command':'kubectl get nodes'}, headers=headers)[0], 400)
+            (profile / 'kubeconfig').write_text('test config')
+            def execute(args, **kwargs):
+                self.assertIn('--kubeconfig=' + str(profile / 'kubeconfig'), args)
+                self.assertEqual(args[-2:], ['get', 'nodes'])
+                self.assertEqual(kwargs['cwd'], profile)
+                self.assertNotIn('shell', kwargs)
+                kwargs['stdout'].write(b'node Ready')
+                return SimpleNamespace(returncode=0)
+            with patch.object(app.shutil, 'which', return_value='/bin/kubectl'), patch.object(app.subprocess, 'run', side_effect=execute):
+                code, body = self.request('/api/kubectl', {'command':'kubectl get nodes'}, headers=headers)
+                self.assertEqual(code, 200)
+                self.assertEqual(json.loads(body), {'output':'node Ready','exit_code':0})
+        app.CONTEXT.root = app.ROOT
+
     def test_kubeconfig_download_is_authenticated_and_scoped(self):
         import tempfile
         with tempfile.TemporaryDirectory() as directory, patch.object(app, 'ROOT', Path(directory)):

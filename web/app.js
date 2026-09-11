@@ -140,6 +140,7 @@ async function loadClusters(){
   for(const name of names){const option=element('option',name==='default'?'k8s-cluster1 (основной)':name);option.value=name;$('cluster-select').append(option)}
   $('cluster-select').value=selectedCluster;
   $('cluster-select').disabled=!names.length;
+  renderKubectl();
 }
 $('cluster-select').onchange=async()=>{selectedCluster=$('cluster-select').value;sessionStorage.setItem('lab-cluster',selectedCluster);await refresh();await loadLinks()};
 $('create-cluster').onclick=()=>{ $('new-cluster').click(); };
@@ -187,3 +188,31 @@ $('download-kubeconfig').onclick=async()=>{
     error('');
   } catch(e){error(e.message)} finally{button.disabled=false}
 };
+
+const commandResults = new Map();
+let commandPending = false;
+function renderKubectl() {
+  $('kubectl-cluster').textContent = selectedCluster === 'default' ? 'k8s-cluster1' : selectedCluster;
+  const result = commandResults.get(selectedCluster);
+  $('kubectl-output').textContent = result ? result.output : 'Введите команду для выбранного кластера. Kubeconfig подключится автоматически.';
+  $('kubectl-status').textContent = result ? result.status : '';
+}
+$('cluster-select').addEventListener('change', renderKubectl);
+$('kubectl-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (commandPending) return;
+  const cluster = selectedCluster;
+  const command = $('kubectl-command').value.trim();
+  if (!command) return;
+  commandPending = true; $('kubectl-run').disabled = true;
+  commandResults.set(cluster, {output: '$ ' + command + '\nВыполняется…', status: 'Выполняется…'});
+  renderKubectl();
+  try {
+    const result = await api('kubectl', {command});
+    commandResults.set(cluster, {output: '$ ' + command + '\n' + (result.output || 'Команда выполнена без вывода.'), status: result.exit_code === 0 ? 'Завершено' : 'Код завершения: ' + result.exit_code});
+  } catch (e) {
+    commandResults.set(cluster, {output: e.message, status: 'Команда не выполнена'});
+  } finally {
+    commandPending = false; $('kubectl-run').disabled = false; renderKubectl();
+  }
+});
