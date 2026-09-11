@@ -285,6 +285,29 @@ def status():
     return result
 
 
+def node_utilization():
+    from concurrent.futures import ThreadPoolExecutor
+    root=active_root();env=cluster_env(root)
+    def run(args):
+        p=subprocess.run([str(root/'kubectl.sh')]+args,cwd=root,env=env,capture_output=True,text=True,timeout=9)
+        if p.returncode:raise RuntimeError('Метрики узла недоступны')
+        return json.loads(p.stdout)
+    nodes=run(['get','nodes','-o','json','--request-timeout=5s'])['items']
+    def quantity(value):
+        match=re.fullmatch(r'([0-9.]+)(Ki|Mi|Gi|Ti|m)?',str(value))
+        if not match:return None
+        return float(match[1])*{'Ki':1024,'Mi':1024**2,'Gi':1024**3,'Ti':1024**4,'m':.001,None:1}[match[2]]
+    def metric(used,total,timestamp):
+        return dict(used=used,total=total,percent=100*used/total if used is not None and total else None,time=timestamp)
+    def one(node):
+        name=node['metadata']['name']
+        try:
+            data=run(['get','--raw','/api/v1/nodes/'+name+'/proxy/stats/summary','--request-timeout=5s'])['node']
+            capacity=node['status']['capacity'];cpu=data.get('cpu',{});memory=data.get('memory',{});disk=data.get('fs',{})
+            return dict(name=name,cpu=metric(cpu['usageNanoCores']/1e9 if 'usageNanoCores' in cpu else None,quantity(capacity.get('cpu')),cpu.get('time')),memory=metric(memory.get('workingSetBytes'),quantity(capacity.get('memory')),memory.get('time')),disk=metric(disk.get('usedBytes'),disk.get('capacityBytes'),disk.get('time')))
+        except (RuntimeError,ValueError,KeyError,subprocess.TimeoutExpired):return dict(name=name,error='Нет свежих метрик kubelet')
+    with ThreadPoolExecutor(max_workers=4) as pool:return list(pool.map(one,nodes))
+
 def links():
     if not config()['nodes']:
         return {}
@@ -457,6 +480,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, credentials(path.rsplit('/', 1)[1]))
             if path == '/api/secret-info':
                 return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).secret_info())
+            if path == '/api/node-utilization':
+                return self.reply(200, node_utilization())
             if path == '/api/pvcs':
                 return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).pvcs())
             if path == '/api/apps':

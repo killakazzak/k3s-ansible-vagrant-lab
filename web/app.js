@@ -68,10 +68,11 @@ function render() {
   $('memory').textContent=(state.nodes.reduce((s,n)=>s+n.ram,0)/1024).toFixed(0)+' ГБ';
   $('version').textContent=state.version; $('provider').textContent=state.provider+' · ARM64';
   $('node-list').replaceChildren();
-  if(!state.nodes.length){const row=element('tr'),cell=element('td','Кластер пуст. Нажмите «Новый кластер».');cell.colSpan=5;row.append(cell);$('node-list').append(row)}
+  if(!state.nodes.length){const row=element('tr'),cell=element('td','Кластер пуст. Нажмите «Новый кластер».');cell.colSpan=6;row.append(cell);$('node-list').append(row)}
   for (const node of state.nodes) {
     const tr=element('tr'),name=element('td');name.append(element('span',node.name,'node-name'),element('span',node.role==='server'?'CONTROL PLANE':'WORKER','role'));tr.append(name);
     const status=element('td');status.append(element('span',(node.state==='Absent'?'Не создан':node.state)+(node.vm_state==='poweroff'?' / VM выключена':''),'badge '+node.state));tr.append(status,element('td',node.ip),element('td',node.cpu+' CPU / '+node.ram/1024+' ГБ / '+node.disk+' ГБ диск'));
+    const usage=element('td',undefined,'node-utilization');usage.dataset.node=node.name;tr.append(usage);
     const actions=element('td'),wrap=element('div',undefined,'nodebuttons');
     const edit=element('button','Настроить','textbutton');edit.dataset.action='resources';edit.dataset.node=node.name;wrap.append(edit);
     const protectedNode=node.role==='server'?state.nodes.find(n=>n.role==='server')===node:state.nodes.filter(n=>n.role==='workers').length<=1;
@@ -79,6 +80,7 @@ function render() {
     actions.append(wrap);tr.append(actions);$('node-list').append(tr);
   }
   setBusy(busy);
+  renderNodeUsage();
   renderProgress();
 }
 function setBusy(value){busy=value;$('cluster-select').disabled=clusterCount===0;$('new-cluster').disabled=value;$('create-cluster').disabled=value;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=value || (!!state && !state.nodes.length && !['create'].includes(b.dataset.action)))}
@@ -272,3 +274,14 @@ function renderClusterCheck(){
  $('cluster-check-result').textContent={success:'✓ Проверка пройдена',failed:'✕ Проверка не пройдена',running:'◌ Выполняется проверка'}[status]||'Ещё не проверено';
  $('cluster-check-time').textContent=result?(status==='running'?`Прошло ${result.duration} с · дождитесь результата`:`${new Date(result.finished*1000).toLocaleString()} · ${result.duration} с · ${status==='success'?'Повторить проверку':'Повторить · подробности в журнале'}`):'Нажмите, чтобы проверить DNS, сеть и Traefik';
 }
+
+let nodeUsage=[],nodeUsageCluster=null,nodeUsageBusy=false,nodeUsageError='';
+function renderNodeUsage(){
+ for(const cell of document.querySelectorAll('.node-utilization')){cell.replaceChildren();const data=nodeUsageCluster===selectedCluster?nodeUsage.find(n=>n.name===cell.dataset.node):null;
+ if(!data||data.error){cell.append(element('small',data?.error||nodeUsageError||'Получаем метрики…','usage-note'));continue;}
+ for(const [key,label] of [['cpu','CPU'],['memory','RAM'],['disk','Диск']]){const m=data[key];const line=element('div',undefined,'usage-line');const stale=m.time&&Date.now()-Date.parse(m.time)>120000;const format=v=>key==='cpu'?v.toFixed(2)+' яд.':(v/1024**3).toFixed(1)+' GiB';const value=m.percent===null?'Нет данных':format(m.used)+' / '+format(m.total)+' · '+m.percent.toFixed(1)+'%';line.append(element('span',label),element('strong',value));const track=element('div',undefined,'usage-track');const fill=element('div',undefined,'usage-fill '+(m.percent>=90?'high':m.percent>=75?'medium':''));fill.style.width=Math.min(100,Math.max(0,m.percent||0))+'%';track.append(fill);cell.append(line,track);if(m.time)track.title='Измерено: '+new Date(m.time).toLocaleString()+(stale?' · устарело':'');}
+ const times=[data.cpu.time,data.memory.time,data.disk.time].filter(Boolean).sort();const oldest=times[0];cell.append(element('small',oldest?((Date.now()-Date.parse(oldest)>120000?'⚠ Данные устарели · ':'')+new Date(oldest).toLocaleTimeString()):'Время измерения неизвестно','usage-note'));
+ }
+}
+async function refreshNodeUsage(){if(nodeUsageBusy)return;nodeUsageBusy=true;const cluster=selectedCluster;try{const data=await api('node-utilization');if(cluster!==selectedCluster)return;nodeUsage=data;nodeUsageCluster=cluster;nodeUsageError='';}catch(e){if(cluster===selectedCluster){nodeUsage=[];nodeUsageCluster=cluster;nodeUsageError='Метрики недоступны';}}finally{nodeUsageBusy=false;renderNodeUsage();if(cluster!==selectedCluster)refreshNodeUsage()}}
+$('cluster-select').addEventListener('change',()=>{nodeUsage=[];nodeUsageCluster=null;nodeUsageError='';renderNodeUsage();refreshNodeUsage()});$('refresh').addEventListener('click',refreshNodeUsage);setInterval(()=>{if(!document.hidden)refreshNodeUsage()},15000);refreshNodeUsage();
