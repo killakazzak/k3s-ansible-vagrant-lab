@@ -41,7 +41,13 @@ def validate(config):
     if host and not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?',host):raise ValueError('URL: укажите hostname без http:// и пути')
     if host and ('..' in host or len(host)>253 or any(len(part)>63 for part in host.split('.'))):raise ValueError('Некорректный hostname')
     if kind in ('postgres','redis','kafka') and host:raise ValueError('HTTP Ingress не применяется к PostgreSQL/Redis/Kafka')
-    return dict(type=kind,name=dns(config.get('name',''),'имя приложения'),namespace=namespace(config.get('namespace','dev'),True),image=image,
+    mode=config.get('storage_mode','new' if kind in STATEFUL else 'none')
+    if mode not in ('none','new','existing') or (kind in STATEFUL and mode=='none'):raise ValueError('Выберите новый или существующий PVC')
+    claim=dns(config.get('pvc',''),'PVC') if mode=='existing' else ''
+    mount=config.get('mount_path','/data')
+    if not isinstance(mount,str) or not mount.startswith('/') or mount=='/' or '..' in mount.split('/'):raise ValueError('Укажите абсолютный путь монтирования')
+    credential=dns(config.get('storage_secret',''),'Secret с паролем') if mode=='existing' and kind in ('postgres','rabbitmq') else ''
+    return dict(storage_mode=mode,pvc=claim,mount_path=mount,storage_secret=credential,type=kind,name=dns(config.get('name',''),'имя приложения'),namespace=namespace(config.get('namespace','dev'),True),image=image,
                 replicas=number(config.get('replicas',1),1,1 if kind in STATEFUL else 10,'реплики'),
                 cpu=number(config.get('cpu',100),25,8000,'CPU, millicores'),memory=number(config.get('memory',1024 if kind=='kafka' else 512 if kind=='rabbitmq' else 256),768 if kind=='kafka' else 256 if kind=='rabbitmq' else 32,16384,'RAM, MiB'),
                 storage=number(config.get('storage',2),1,100,'диск, GiB'),port=number(config.get('port',CATALOG[kind]['port']),1,65535,'порт'),host=host)
@@ -92,6 +98,13 @@ class Apps:
         for app in out:
             app['urls']=[{'title':i['metadata']['name'],'url':'http://'+r['host']+'/'} for i in routes if i['metadata'].get('namespace')==app['namespace'] for r in i.get('spec',{}).get('rules',[]) if r.get('host') and any(p.get('backend',{}).get('service',{}).get('name') in (app['name'],app['name']+'-ui') for p in r.get('http',{}).get('paths',[]))]
         return out
+    def pvcs(self):
+        pods=self.get('pods')['items'];result=[]
+        for pvc in self.get('pvc')['items']:
+            m=pvc['metadata'];spec=pvc['spec'];status=pvc.get('status',{})
+            users=[p['metadata']['name'] for p in pods if p['metadata'].get('namespace')==m['namespace'] and any(v.get('persistentVolumeClaim',{}).get('claimName')==m['name'] for v in p.get('spec',{}).get('volumes',[]))]
+            result.append(dict(name=m['name'],namespace=m['namespace'],phase=status.get('phase','Pending'),capacity=status.get('capacity',{}).get('storage',spec.get('resources',{}).get('requests',{}).get('storage','')),storageClass=spec.get('storageClassName',''),accessModes=spec.get('accessModes',[]),volume=spec.get('volumeName',''),pods=users))
+        return result
     def check_result(self,obj):
         try:data=json.loads((self.root/'.cache/app-checks.json').read_text()).get(obj['metadata']['uid'])
         except (OSError,ValueError,KeyError):return None
@@ -128,17 +141,20 @@ class Apps:
         # Older generated database Secrets have no ownership labels. Keep them with data.
         if delete_data:
             refs={e.get('valueFrom',{}).get('secretKeyRef',{}).get('name') for c in workload['spec']['template']['spec']['containers'] for e in c.get('env',[])}
-            if managed and name+'-auth' in refs:selected.append(('Secret',name+'-auth'))
+            if managed and not workload['metadata'].get('annotations',{}).get('lab.k3s/external-pvc') and name+'-auth' in refs:selected.append(('Secret',name+'-auth'))
         else:selected=[o for o in selected if o!=('Secret',name+'-auth')]
         self.kubectl(['delete',kind,name,'-n',ns,'--wait=true','--timeout=90s'],timeout=100)
         for resource,n in selected:
             if (resource,n)==(kind,name):continue
             self.kubectl(['delete',resource,n,'-n',ns,'--ignore-not-found','--wait=false'])
+        owned_pvc=workload['metadata'].get('annotations',{}).get('lab.k3s/owned-pvc')
+        if delete_data and owned_pvc and managed:self.kubectl(['delete','pvc',owned_pvc,'-n',ns,'--ignore-not-found','--wait=false'])
         if delete_data and kind=='StatefulSet':
             claims=[v['metadata']['name'] for v in workload['spec'].get('volumeClaimTemplates',[])]
             for pvc in self.get('pvc',ns)['items']:
                 n=pvc['metadata']['name']
                 if any(re.fullmatch(re.escape(claim+'-'+name+'-')+r'\d+',n) for claim in claims):self.kubectl(['delete','pvc',n,'-n',ns,'--wait=false'])
+        if workload['metadata'].get('annotations',{}).get('lab.k3s/external-pvc'):delete_data=False
         print(('Приложение и веб-панель удалены. ' if managed else 'Workload удалён; внешние Service/Ingress сохранены. ')+('PVC и пароль базы удалены.' if delete_data else 'PVC и пароль базы сохранены.'),flush=True)
     def access(self,data):
         ns=namespace(data.get('namespace'));name=dns(data.get('name'));kind=data.get('kind')
@@ -153,7 +169,9 @@ class Apps:
         if panel:result['panels'].append({k:panel.get(k,'') for k in ('title','url','username','password')})
         ctype=workload['metadata']['labels'].get('lab.k3s/type')
         if ctype in ('postgres','rabbitmq'):
-            credentials=secret(name+'-auth');result['username']='app';result['password']=credentials.get('password','')
+            env=workload['spec']['template']['spec']['containers'][0].get('env',[])
+            secret_name=next((e.get('valueFrom',{}).get('secretKeyRef',{}).get('name') for e in env if e['name'] in ('POSTGRES_PASSWORD','RABBITMQ_DEFAULT_PASS')),name+'-auth')
+            credentials=secret(secret_name);result['username']='app';result['password']=credentials.get('password','')
         else:result['note']='У приложения нет отдельного пароля подключения.'
         for ingress in self.get('ingress',ns)['items']:
             for rule in ingress.get('spec',{}).get('rules',[]):
@@ -206,15 +224,27 @@ class Apps:
             workload['spec']['volumeClaimTemplates']=[dict(metadata={'name':'data'},spec={'accessModes':['ReadWriteOnce'],'resources':{'requests':{'storage':str(c['storage'])+'Gi'}}})]
             container['volumeMounts']=[dict(name='data',mountPath={'postgres':('/var/lib/postgresql' if ':18' in c['image'] else '/var/lib/postgresql/data'),'redis':'/data','kafka':'/var/lib/kafka/data','rabbitmq':'/var/lib/rabbitmq'}[c['type']])]
             headless=resource('v1','Service',name+'-headless');headless['spec']=dict(clusterIP='None',selector=selector,ports=[dict(port=c['port'],targetPort='app')]);objects.append(headless)
+        if c['storage_mode']=='existing':
+            workload['spec'].pop('volumeClaimTemplates',None)
+            pod.setdefault('volumes',[]).append({'name':'data','persistentVolumeClaim':{'claimName':c['pvc']}})
+            workload['metadata']['annotations']={'lab.k3s/external-pvc':c['pvc']}
+        elif c['storage_mode']=='new' and kind=='Deployment':
+            pvc=resource('v1','PersistentVolumeClaim',name+'-data');pvc['spec']={'accessModes':['ReadWriteOnce'],'resources':{'requests':{'storage':str(c['storage'])+'Gi'}}};objects.append(pvc)
+            pod.setdefault('volumes',[]).append({'name':'data','persistentVolumeClaim':{'claimName':name+'-data'}})
+            workload['metadata']['annotations']={'lab.k3s/owned-pvc':name+'-data'}
+        if kind=='Deployment' and c['storage_mode']!='none':
+            if c['replicas']!=1:raise ValueError('Приложение с одним PVC поддерживает одну реплику')
+            workload['spec']['strategy']={'type':'Recreate'}
+            container['volumeMounts']=[{'name':'data','mountPath':c['mount_path']}]
         if c['type']=='postgres':
-            container['env']=[dict(name='POSTGRES_PASSWORD',valueFrom={'secretKeyRef':{'name':name+'-auth','key':'password'}}),dict(name='POSTGRES_USER',value='app'),dict(name='POSTGRES_DB',value='app'),dict(name='PGDATA',value='/var/lib/postgresql/18/docker' if ':18' in c['image'] else '/var/lib/postgresql/data/pgdata')]
+            container['env']=[dict(name='POSTGRES_PASSWORD',valueFrom={'secretKeyRef':{'name':c['storage_secret'] or name+'-auth','key':'password'}}),dict(name='POSTGRES_USER',value='app'),dict(name='POSTGRES_DB',value='app'),dict(name='PGDATA',value='/var/lib/postgresql/18/docker' if ':18' in c['image'] else '/var/lib/postgresql/data/pgdata')]
         if c['type']=='redis':container['args']=['redis-server','--appendonly','yes']
         if c['type']=='kafka':
             pod['securityContext']={'fsGroup':1000}
             values={'KAFKA_NODE_ID':'1','KAFKA_PROCESS_ROLES':'broker,controller','KAFKA_LISTENERS':'PLAINTEXT://:9092,CONTROLLER://:9093','KAFKA_ADVERTISED_LISTENERS':'PLAINTEXT://'+name+'.'+ns+'.svc.cluster.local:9092','KAFKA_LISTENER_SECURITY_PROTOCOL_MAP':'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT','KAFKA_CONTROLLER_LISTENER_NAMES':'CONTROLLER','KAFKA_CONTROLLER_QUORUM_VOTERS':'1@localhost:9093','KAFKA_INTER_BROKER_LISTENER_NAME':'PLAINTEXT','KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR':'1','KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR':'1','KAFKA_TRANSACTION_STATE_LOG_MIN_ISR':'1','KAFKA_LOG_DIRS':'/var/lib/kafka/data/logs','KAFKA_HEAP_OPTS':'-Xms256m -Xmx512m','CLUSTER_ID':'MkU3OEVBNTcwNTJENDM2Qk'}
             container['env']=[dict(name=k,value=v) for k,v in values.items()]
         if c['type']=='rabbitmq':
-            container['env']=[dict(name='RABBITMQ_DEFAULT_USER',value='app'),dict(name='RABBITMQ_DEFAULT_PASS',valueFrom={'secretKeyRef':{'name':name+'-auth','key':'password'}})]
+            container['env']=[dict(name='RABBITMQ_DEFAULT_USER',value='app'),dict(name='RABBITMQ_DEFAULT_PASS',valueFrom={'secretKeyRef':{'name':c['storage_secret'] or name+'-auth','key':'password'}})]
             container['ports'].append(dict(name='management',containerPort=15672))
         objects.append(workload)
         service=resource('v1','Service');service['spec']=dict(type='ClusterIP',selector=selector,ports=[dict(name='app',port=c['port'],targetPort='app')]);objects.append(service)
@@ -229,6 +259,13 @@ class Apps:
         return c,kind,objects,host
     def preflight(self,config):
         c,kind,objects,host=self.plan(config)
+        if c['storage_mode']=='existing':
+            pvc=self.find('pvc',c['namespace'],c['pvc'])
+            if not pvc or pvc.get('metadata',{}).get('deletionTimestamp') or pvc.get('status',{}).get('phase')!='Bound' or pvc.get('spec',{}).get('volumeMode','Filesystem')!='Filesystem':raise ValueError('Нужен готовый Filesystem PVC в выбранном namespace')
+            if any(v.get('persistentVolumeClaim',{}).get('claimName')==c['pvc'] for p in self.get('pods',c['namespace'])['items'] for v in p.get('spec',{}).get('volumes',[])):raise ValueError('PVC уже используется Pod. Сначала остановите использующее его приложение.')
+            if c['storage_secret']:
+                secret=self.find('secret',c['namespace'],c['storage_secret'])
+                if not secret or not secret.get('data',{}).get('password'):raise ValueError('Secret должен содержать ключ password с прежним паролем базы (пользователь app)')
         for obj in objects:
             if obj['kind']=='Ingress':
                 panelhost=obj['spec']['rules'][0]['host']
@@ -238,14 +275,14 @@ class Apps:
         for other in ('Deployment','StatefulSet'):
             if self.find(other,c['namespace'],c['name']):raise ValueError('Приложение с таким именем уже существует')
         if host and any(r.get('host')==host for i in self.get('ingress')['items'] for r in i.get('spec',{}).get('rules',[])):raise ValueError('Этот hostname уже используется Ingress')
-        if c['type'] in ('postgres','rabbitmq') and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Secret для базы уже существует; используйте другое имя')
-        if kind=='StatefulSet' and self.find('pvc',c['namespace'],'data-'+c['name']+'-0'):raise ValueError('Сохранённый PVC уже существует. Используйте другое имя или восстановите приложение вручную.')
+        if c['type'] in ('postgres','rabbitmq') and not c['storage_secret'] and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Secret для базы уже существует; используйте другое имя')
+        if kind=='StatefulSet' and c['storage_mode']=='new' and self.find('pvc',c['namespace'],'data-'+c['name']+'-0'):raise ValueError('Сохранённый PVC уже существует. Используйте другое имя или восстановите приложение вручную.')
         return c,kind,objects,host
     def deploy(self,config,prepared=None):
         c,kind,objects,host=prepared or self.preflight(config);ns=c['namespace'];name=c['name']
         print('TASK [Создать '+ns+'/'+name+']',flush=True)
         if not self.find('namespace',None,ns):self.apply([{'apiVersion':'v1','kind':'Namespace','metadata':{'name':ns}}])
-        if c['type'] in ('postgres','rabbitmq'):
+        if c['type'] in ('postgres','rabbitmq') and not c['storage_secret']:
             self.apply([dict(apiVersion='v1',kind='Secret',metadata=dict(name=name+'-auth',namespace=ns),type='Opaque',stringData={'password':secrets.token_urlsafe(32)})])
         self.apply(objects)
         print(self.kubectl(['rollout','status',kind.lower()+'/'+name,'-n',ns,'--timeout=240s'],timeout=250),flush=True)
@@ -254,8 +291,8 @@ class Apps:
             print(self.kubectl(['rollout','status','deployment/'+name+'-ui','-n',ns,'--timeout=300s'],timeout=310),flush=True)
             print('Веб-панель: '+next(o['stringData']['url'] for o in objects if o['kind']=='Secret' and o['metadata']['name']==name+'-ui-auth')+' — учётные данные в карточке приложения.',flush=True)
         print('Готово: '+(host and 'http://'+host+'/' or name+'.'+ns+'.svc.cluster.local:'+str(c['port'])),flush=True)
-        if c['type']=='rabbitmq':print('RabbitMQ: пользователь app, пароль в Secret '+ns+'/'+name+'-auth (ключ password).',flush=True)
-        if c['type']=='postgres':print('PostgreSQL: пользователь app, база app, пароль в Secret '+ns+'/'+name+'-auth (ключ password).',flush=True)
+        if c['type']=='rabbitmq':print('RabbitMQ: пользователь app, пароль в Secret '+ns+'/'+(c['storage_secret'] or name+'-auth')+' (ключ password).',flush=True)
+        if c['type']=='postgres':print('PostgreSQL: пользователь app, база app, пароль в Secret '+ns+'/'+(c['storage_secret'] or name+'-auth')+' (ключ password).',flush=True)
     def check(self,c,kind,host=''):
         obj=self.get(kind,c['namespace'],c['name'])
         self.record_check(obj,'running')
@@ -315,6 +352,7 @@ class Apps:
                 old=next(c['image'] for c in containers if c['name']==container)
                 if old.rsplit(':',1)[-1].split('.')[0].split('-')[0]!=image.rsplit(':',1)[-1].split('.')[0].split('-')[0]:raise ValueError('Смена major базы требует миграции данных. Создайте новую базу и перенесите данные.')
             replicas=number(data.get('replicas',1),0,1 if ctype in STATEFUL else 10,'реплики')
+            if replicas>1 and any(v.get('persistentVolumeClaim') for v in obj['spec']['template']['spec'].get('volumes',[])):raise ValueError('Для приложения с одним PVC разрешена только одна реплика')
             patch={'spec':{'replicas':replicas,'template':{'spec':{'containers':[{'name':container,'image':image}]}}}}
             self.kubectl(['patch',target,'-n',ns,'--type=strategic','-p',json.dumps(patch)])
         elif action=='app_rollback':

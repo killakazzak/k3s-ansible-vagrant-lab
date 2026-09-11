@@ -111,3 +111,15 @@ class LabTests(unittest.TestCase):
    with patch.object(app,'get',return_value=obj),patch.object(app,'_check',side_effect=ValueError('failure')):
     with self.assertRaises(ValueError):app.check({'name':'web','namespace':'dev'},'Deployment')
    self.assertEqual(app.check_result(obj)['state'],'failed')
+
+ def test_existing_pvc_manifest_is_not_recreated(self):
+  c,k,objects,h=lab.Apps('/tmp').plan({'name':'db','namespace':'dev','type':'postgres','storage_mode':'existing','pvc':'saved','storage_secret':'saved-auth'})
+  w=next(o for o in objects if o['kind']=='StatefulSet');self.assertNotIn('volumeClaimTemplates',w['spec']);self.assertEqual(w['spec']['template']['spec']['volumes'][0]['persistentVolumeClaim']['claimName'],'saved');self.assertFalse(any(o['kind']=='PersistentVolumeClaim' for o in objects));self.assertIn('saved-auth',str(w))
+ def test_new_pvc_for_custom_application(self):
+  c,k,objects,h=lab.Apps('/tmp').plan({'name':'web','namespace':'dev','type':'custom','image':'nginx:1.30.4-alpine','storage_mode':'new','mount_path':'/content'})
+  self.assertTrue(any(o['kind']=='PersistentVolumeClaim' for o in objects));w=next(o for o in objects if o['kind']=='Deployment');self.assertEqual(w['spec']['template']['spec']['containers'][0]['volumeMounts'][0]['mountPath'],'/content')
+ def test_busy_pvc_rejected_before_apply(self):
+  app=lab.Apps('/tmp')
+  with patch.object(app,'find',return_value={'metadata':{},'spec':{},'status':{'phase':'Bound'}}),patch.object(app,'get',return_value={'items':[{'spec':{'volumes':[{'persistentVolumeClaim':{'claimName':'saved'}}]}}]}),patch.object(app,'apply') as apply:
+   with self.assertRaises(ValueError):app.preflight({'name':'cache','type':'redis','namespace':'dev','storage_mode':'existing','pvc':'saved'})
+   apply.assert_not_called()

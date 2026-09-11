@@ -25,6 +25,8 @@ def main():
         if not isinstance(configs,list) or not 1<=len(configs)<=10:raise ValueError('Выберите от 1 до 10 приложений')
         validated=[validate(c) for c in configs]
         if len({(c['namespace'],c['name']) for c in validated})!=len(validated):raise ValueError('Повторяются имена приложений')
+        claims=[(c['namespace'],c['pvc']) for c in validated if c['storage_mode']=='existing']
+        if len(claims)!=len(set(claims)):raise ValueError('Один PVC нельзя подключить к нескольким приложениям набора')
         prepared=[apps.preflight(c) for c in validated]
         hosts=[p[3] for p in prepared if p[3]]
         if len(set(hosts))!=len(hosts):raise ValueError('Повторяются hostname приложений')
