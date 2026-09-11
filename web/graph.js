@@ -5,6 +5,45 @@ const graphReducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
 function syncGraphMotion(){const paused=graphPaused||graphReducedMotion.matches||document.hidden;const svg=$('cluster-graph');svg.classList.toggle('motion-paused',paused);if(paused)svg.pauseAnimations();else svg.unpauseAnimations();$('graph-motion').textContent=graphPaused?'▶ Анимация':'Ⅱ Пауза';$('graph-motion').setAttribute('aria-pressed',String(graphPaused));}
 const svgNS='http://www.w3.org/2000/svg';
 function svgEl(tag,attrs={},text){const el=document.createElementNS(svgNS,tag);for(const [k,v] of Object.entries(attrs))el.setAttribute(k,v);if(text!==undefined)el.textContent=text;return el;}
+function routeURLs(route){
+ if(!route)return [];
+ let host=route.host,paths=[route.path];
+ if(route.kind==='IngressRoute'){
+  // Only derive clickable URLs from a single literal Host rule.
+  const hosts=[...host.matchAll(/\bHost\(`([^`]+)`\)/g)];
+  if(hosts.length!==1||/HostRegexp|!\s*Host/.test(host))return [];
+  paths=[...host.matchAll(/\bPath(?:Prefix)?\(`([^`]+)`\)/g)].map(m=>m[1]);
+  if(!paths.length)paths=['/'];
+  host=hosts[0][1];
+ }
+ if(!/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(host)||host.includes('..'))return [];
+ return [...new Set(paths)].filter(p=>typeof p==='string'&&p.startsWith('/')&&!/[?#\\\s]/.test(p)).map(path=>{
+  if(route.internal==='api@internal'&&path==='/dashboard')path='/dashboard/';
+  return (route.tls?'https://':'http://')+host+path;
+ });
+}
+function renderRouteInfo(route,svc,pods){
+ const box=$('graph-route-info');box.replaceChildren();
+ if(!route)return;
+ const add=(tag,text,cls)=>{const el=document.createElement(tag);el.textContent=text;if(cls)el.className=cls;return el;};
+ const heading=add('div','Куда ведёт ссылка','route-caption');box.append(heading);
+ const urls=routeURLs(route);
+ for(const url of urls){
+  const row=add('div','','route-url-row');const link=add('a',url+' ↗','route-url');link.href=url;link.target='_blank';link.rel='noopener noreferrer';row.append(link);
+  const button=add('button','Копировать','button secondary');button.type='button';button.onclick=async()=>{try{await navigator.clipboard.writeText(url);button.textContent='Скопировано';setTimeout(()=>button.textContent='Копировать',1800)}catch{button.textContent='Выделите ссылку для копирования'}};row.append(button);box.append(row);
+ }
+ if(!urls.length)box.append(add('p','Точный URL нельзя вывести из этого правила. Хост / условие: '+route.host+' · '+route.path));
+ const purpose=route.internal==='api@internal'?'Панель и API Traefik':route.name==='rancher'?'Rancher — управление Kubernetes':route.name==='nginx-demo'?'Тестовый сайт Nginx':'Приложение '+(svc?svc.name:route.name);
+ box.append(add('div',purpose,'route-purpose'));
+ const list=add('dl','','route-destinations');
+ const item=(label,value)=>{list.append(add('dt',label),add('dd',value));};
+ item('Ingress',`${route.namespace}/${route.name} · ${route.controller}`);
+ item('Service',svc?`${svc.id} · порт ${typeof route.port==='object'?JSON.stringify(route.port):route.port}`:route.internal||'Не найден');
+ if(svc)item('Внутри кластера',svc.external||`${svc.name}.${svc.namespace}.svc.cluster.local · ${svc.ip}`);
+ item('Pod → узел',pods.length?pods.map(p=>`${p.name} → ${p.node||'ещё не назначен'}`).join('\n'):route.internal?'Обрабатывается внутри контроллера Traefik':'Нет привязанных Pod endpoints');
+ box.append(list);
+ box.append(add('p','URL выше — вход в приложение через Ingress. Адрес Service доступен внутри кластера. Показан маршрут по конфигурации; доступность URL отдельно не проверялась.','route-note'));
+}
 function drawGraph(){
  const svg=$('cluster-graph');svg.replaceChildren();svg.setCurrentTime(0);
  if(!graphData)return;
@@ -13,6 +52,7 @@ function drawGraph(){
  const endpoints=route?graphData.endpoints.filter(e=>e.service===route.service):[];
  const podIds=new Set(endpoints.map(e=>e.pod).filter(Boolean));
  const pods=graphData.pods.filter(p=>podIds.has(p.id));
+ renderRouteInfo(route,svc,pods);
  const nodes=[...graphData.nodes].sort((a,b)=>a.role.localeCompare(b.role)||a.name.localeCompare(b.name));
  const h=Math.max(340,100+Math.max(pods.length,nodes.length)*105);svg.setAttribute('viewBox',`0 0 1280 ${h}`);svg.style.height=h+'px';
  const defs=svgEl('defs'),marker=svgEl('marker',{id:'route-arrow',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:5,markerHeight:5,orient:'auto'});marker.append(svgEl('path',{d:'M0 0 L10 5 L0 10 Z',fill:'#74a993'}));defs.append(marker);svg.append(defs);
@@ -60,14 +100,14 @@ function drawGraph(){
 async function refreshGraph(){
  if(graphLoading)return;graphLoading=true;
  const cluster=selectedCluster;
- if(graphCluster!==cluster){graphData=null;graphSignature='';$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-detail').textContent='Загружаем карту выбранного кластера…';}
+ if(graphCluster!==cluster){graphData=null;graphSignature='';$('graph-route-info').replaceChildren();$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-detail').textContent='Загружаем карту выбранного кластера…';}
  $('graph-status').textContent='Получаем данные Kubernetes…';
  try{const data=await api('topology');if(cluster!==selectedCluster)return;const old=$('graph-route').value;const signature=JSON.stringify([cluster,data.nodes,data.services,data.pods,data.routes,data.endpoints]);const changed=signature!==graphSignature;graphSignature=signature;graphCluster=cluster;graphData=data;$('graph-route').replaceChildren();
- for(const r of data.routes){const o=document.createElement('option');o.value=r.id;o.textContent=`${r.host}${r.path} · ${r.namespace}/${r.name}`;$('graph-route').append(o)}
+ for(const r of data.routes){const o=document.createElement('option');o.value=r.id;o.textContent=`${routeURLs(r)[0]||r.host+' '+r.path} → ${r.namespace}/${r.name}`;$('graph-route').append(o)}
  if(data.routes.some(r=>r.id===old))$('graph-route').value=old;
  else {const demo=data.routes.find(r=>r.host.startsWith('nginx.'));if(demo)$('graph-route').value=demo.id;}
  $('graph-status').textContent=(data.warning?data.warning+' · ':'')+'Обновлено '+new Date(data.updated*1000).toLocaleTimeString();if(changed){$('graph-detail').textContent='Нажмите на Ingress, Service, Pod или узел — здесь появятся подробности.';drawGraph();}
- }catch(e){if(cluster===selectedCluster){graphData=null;graphSignature='';$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-status').textContent=e.message;$('graph-detail').textContent='Карта недоступна. Проверьте состояние выбранного кластера.';}}
+ }catch(e){if(cluster===selectedCluster){graphData=null;graphSignature='';$('graph-route-info').replaceChildren();$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-status').textContent=e.message;$('graph-detail').textContent='Карта недоступна. Проверьте состояние выбранного кластера.';}}
  finally{graphLoading=false;if(cluster!==selectedCluster)refreshGraph();}
 }
 $('graph-route').onchange=drawGraph;$('graph-refresh').onclick=refreshGraph;$('cluster-select').addEventListener('change',refreshGraph);
