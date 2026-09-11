@@ -25,6 +25,12 @@ Vagrant.configure("2") do |config|
   nodes.each do |role, hostname, host|
     config.vm.define host.fetch("vagrant_id") do |node|
       node.vm.hostname = hostname
+      disk_gb = host.fetch("vm_disk_gb", settings.fetch("vm_disk_gb", {}).fetch(role, 64))
+      raise "Disk must be 64–2048 GiB" unless disk_gb.is_a?(Integer) && (64..2048).cover?(disk_gb)
+      if disk_gb > 64
+        raise "Custom disk size requires VirtualBox" unless settings.fetch("vm_provider") == "virtualbox"
+        node.vm.disk :disk, size: "#{disk_gb}GB", primary: true
+      end
       node.vm.network "private_network", ip: host.fetch("ansible_host"),
         netmask: IPAddr.new("255.255.255.255").mask(settings.fetch("private_network_prefix")).to_s
       node.vm.provider settings.fetch("vm_provider") do |provider|

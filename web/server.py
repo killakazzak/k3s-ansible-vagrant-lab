@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Loopback-only cluster console; standard library, no pip dependencies."""
 import argparse
+import ipaddress
 import fcntl
 import hmac
 import json
@@ -42,8 +43,9 @@ def config():
         for name, host in group['hosts'].items():
             nodes.append(dict(name=name, role=role, ip=host['ansible_host'],
                               cpu=host.get('vm_cpus', cfg['vm_cpus'][role]),
-                              ram=host.get('vm_memory_mb', cfg['vm_memory_mb'][role])))
-    return dict(nodes=nodes, version=cfg['k3s_version'], provider=cfg['vm_provider'],
+                              ram=host.get('vm_memory_mb', cfg['vm_memory_mb'][role]),
+                              disk=host.get('vm_disk_gb', cfg.get('vm_disk_gb', {}).get(role,64))))
+    return dict(nodes=nodes, network=str(ipaddress.ip_network(str(nodes[0]['ip'])+'/'+str(cfg['private_network_prefix']), strict=False)), version=cfg['k3s_version'], provider=cfg['vm_provider'],
                 rancher=cfg.get('rancher_enabled', False), traefik=cfg.get('traefik_dashboard_enabled', False)
                 and 'traefik' not in cfg['disabled_components'])
 

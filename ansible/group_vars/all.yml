@@ -83,3 +83,6 @@ traefik_dashboard_username: admin
 
 # First image downloads can take more than ten minutes on a slow registry connection.
 bootstrap_rollout_timeout: 1200
+
+# Minimum boot disk size of the pinned Bento box is 64 GiB.
+vm_disk_gb: {server: 64, workers: 64}

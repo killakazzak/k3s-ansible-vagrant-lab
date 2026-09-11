@@ -1,8 +1,10 @@
 #!/usr/bin/env ruby
 require_relative 'menu'
+require_relative 'creation'
 $stdout.sync = true
 $stderr.sync = true
 class WebAction < ClusterMenu
+  include Creation
   def initialize(root, answers)
     super(root)
     @answers = answers
@@ -31,7 +33,11 @@ if $PROGRAM_NAME == __FILE__
     node = params['node']
     answers = case action
     when 'create' then [params.fetch('masters'), params.fetch('workers')]
-    when 'add_master', 'add_worker' then [params.fetch('name'), params.fetch('ip')]
+    when 'add_master', 'add_worker'
+      allocator = WebAction.new(root, [])
+      ip = params.fetch('ip', '').to_s.strip
+      ip = allocator.next_node_ip(action == 'add_master' ? 'server' : 'workers') if ip.empty?
+      [params.fetch('name'), ip]
     when 'remove_master', 'remove_worker'
       group = action == 'remove_master' ? 'server' : 'workers'
       index = groups.fetch(group).fetch('hosts').keys.index(node)
@@ -46,7 +52,9 @@ if $PROGRAM_NAME == __FILE__
     else raise 'Неизвестная операция'
     end
     menu = WebAction.new(root, answers)
-    if ['destroy', 'verify'].include?(action)
+    if action == 'create' && params.key?('server_cpu')
+      menu.create_with_resources(params)
+    elsif ['destroy', 'verify'].include?(action)
       menu.run('./cluster.sh', action)
     else
       method = {'create' => :create_cluster, 'add_master' => :add_master, 'add_worker' => :add_worker,
