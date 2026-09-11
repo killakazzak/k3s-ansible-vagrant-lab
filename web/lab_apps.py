@@ -73,6 +73,26 @@ def save_template(data):
         if os.path.exists(temp):os.unlink(temp)
     return {'ok':True}
 
+def storage_location(pv,nodes):
+    spec=pv.get('spec',{});local=spec.get('local') or spec.get('hostPath')
+    if spec.get('nfs'):return dict(kind='NFS',server=spec['nfs'].get('server',''),path=spec['nfs'].get('path',''),nodes=[],note='Путь на NFS-сервере, не на VM Kubernetes.')
+    if not local:return dict(kind=spec.get('csi',{}).get('driver','Не определено'),nodes=[],path='',note='Физический сервер и путь не раскрыты в PV.' if pv else 'PV ещё не назначен.')
+    terms=spec.get('nodeAffinity',{}).get('required',{}).get('nodeSelectorTerms',[])
+    def matches(node,term):
+        expressions=term.get('matchExpressions',[]);fields=term.get('matchFields',[])
+        if not expressions and not fields:return False
+        for e,is_field in [(e,False) for e in expressions]+[(e,True) for e in fields]:
+            labels={'metadata.name':node['metadata']['name']} if is_field else node['metadata'].get('labels',{})
+            value=labels.get(e['key']);op=e['operator'];values=e.get('values',[])
+            if op=='In' and value not in values:return False
+            if op=='NotIn' and value in values:return False
+            if op=='Exists' and value is None:return False
+            if op=='DoesNotExist' and value is not None:return False
+            if op not in ('In','NotIn','Exists','DoesNotExist'):return False
+        return True
+    candidates=[dict(name=n['metadata']['name'],ip=next((a['address'] for a in n.get('status',{}).get('addresses',[]) if a['type']=='InternalIP'),'')) for n in nodes if any(matches(n,t) for t in terms)]
+    return dict(kind='Локальный диск VM',nodes=candidates,path=local.get('path',''),note='Путь внутри VM, а не на Mac.' if len(candidates)==1 else 'PV не определяет единственный узел хранения; показаны ограничения размещения.')
+
 class Apps:
     def __init__(self,root,env=None):self.root=Path(root);self.env=env or os.environ.copy()
     def kubectl(self,args,body=None,timeout=30):
@@ -100,10 +120,12 @@ class Apps:
         return out
     def pvcs(self):
         pods=self.get('pods')['items'];result=[]
+        volumes={v['metadata']['name']:v for v in self.get('pv')['items']}
+        nodes=self.get('nodes')['items']
         for pvc in self.get('pvc')['items']:
             m=pvc['metadata'];spec=pvc['spec'];status=pvc.get('status',{})
             users=[p['metadata']['name'] for p in pods if p['metadata'].get('namespace')==m['namespace'] and any(v.get('persistentVolumeClaim',{}).get('claimName')==m['name'] for v in p.get('spec',{}).get('volumes',[]))]
-            result.append(dict(name=m['name'],namespace=m['namespace'],phase=status.get('phase','Pending'),capacity=status.get('capacity',{}).get('storage',spec.get('resources',{}).get('requests',{}).get('storage','')),storageClass=spec.get('storageClassName',''),accessModes=spec.get('accessModes',[]),volume=spec.get('volumeName',''),pods=users))
+            result.append(dict(name=m['name'],namespace=m['namespace'],phase=status.get('phase','Pending'),capacity=status.get('capacity',{}).get('storage',spec.get('resources',{}).get('requests',{}).get('storage','')),storageClass=spec.get('storageClassName',''),accessModes=spec.get('accessModes',[]),volume=spec.get('volumeName',''),pods=users,location=storage_location(volumes.get(spec.get('volumeName'),{}),nodes)))
         return result
     def check_result(self,obj):
         try:data=json.loads((self.root/'.cache/app-checks.json').read_text()).get(obj['metadata']['uid'])

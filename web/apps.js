@@ -95,7 +95,7 @@ function deleteApp(app){
 }
 
 let pvcData=[];
-async function refreshPVCs(){const cluster=selectedCluster;try{const data=await api('pvcs');if(cluster!==selectedCluster)return;pvcData=data;const box=$('pvc-list');box.replaceChildren();for(const p of data){const row=element('article',undefined,'app-card');row.append(element('h3',p.name),element('span','Namespace: '+p.namespace,'pvc-namespace-badge'),element('p',p.phase+' · '+p.capacity+' · '+p.accessModes.join(', ')),element('p','StorageClass: '+(p.storageClass||'—')),element('p','PV: '+(p.volume||'не назначен')),element('p','Pod: '+(p.pods.join(', ')||'не используется')));box.append(row)}if(!data.length)box.append(element('p','В кластере пока нет PVC.'));}catch(e){if(cluster===selectedCluster)$('pvc-list').textContent='PVC недоступны: '+e.message}}
+async function refreshPVCs(){const cluster=selectedCluster;try{const data=await api('pvcs');if(cluster!==selectedCluster)return;pvcData=data;const box=$('pvc-list');box.replaceChildren();for(const p of data){const row=renderPVC(p);box.append(row)}if(!data.length)box.append(element('p','В кластере пока нет PVC.'));}catch(e){if(cluster===selectedCluster)$('pvc-list').textContent='PVC недоступны: '+e.message}}
 function addStorageFields(type){
  const mode=labField('storage_mode','Хранилище','none','text',[{value:'none',label:'Без PVC (Nginx / свой образ)'},{value:'new',label:'Создать новый PVC'},{value:'existing',label:'Подключить существующий PVC'}]);
  const claim=labField('pvc','Существующий PVC','','text',[]);const mount=labField('mount_path','Путь монтирования (Nginx / свой образ)','/data');const secret=labField('storage_secret','Secret с прежним паролем базы (ключ password)');secret.required=false;
@@ -104,3 +104,14 @@ function addStorageFields(type){
  mode.onchange=update;$('lab-namespace').addEventListener('input',update);update();refreshPVCs().then(()=>{if($('lab-dialog').open&&$('lab-storage_mode')===mode)update()});
 }
 $('pvc-refresh').onclick=refreshPVCs;$('cluster-select').addEventListener('change',()=>{pvcData=[];$('pvc-list').replaceChildren();refreshPVCs()});setInterval(()=>{if(!document.hidden)refreshPVCs()},15000);refreshPVCs();
+
+function renderPVC(p){
+ const row=element('article',undefined,'pvc-card');const head=element('div',undefined,'pvc-card-head');head.append(element('span','▤','pvc-icon'),element('h3',p.name),element('span',p.phase,'pvc-state '+(p.phase==='Bound'?'bound':'pending')));row.append(head);
+ const overview=element('div',undefined,'pvc-overview');overview.append(element('span',p.capacity||'—','pvc-capacity'),element('span','Namespace: '+p.namespace,'pvc-namespace-badge'));row.append(overview);
+ const location=p.location||{};const place=element('div',undefined,'pvc-location');place.append(element('span','РАСПОЛОЖЕНИЕ ДАННЫХ','eyebrow'));
+ const nodes=location.nodes||[];place.append(element('strong',location.server||nodes.map(n=>n.name+(n.ip?' · '+n.ip:'')).join(', ')||'Сервер не определён'));
+ const path=element('code',location.path||'Путь не предоставлен хранилищем');place.append(path);
+ if(location.path){const copy=element('button','Копировать путь','button secondary');copy.type='button';copy.onclick=()=>navigator.clipboard.writeText(location.path).then(()=>{copy.textContent='Скопировано'}).catch(labError);place.append(copy)}
+ place.append(element('small',location.note||''));row.append(place);
+ const details=element('dl',undefined,'pvc-details');for(const [label,value] of [['Хранилище',p.storageClass||'—'],['Тип',location.kind||'—'],['Доступ',p.accessModes.join(', ')],['PV',p.volume||'не назначен'],['Используют Pod',p.pods.join(', ')||'Не используется']])details.append(element('dt',label),element('dd',value));row.append(details);return row;
+}

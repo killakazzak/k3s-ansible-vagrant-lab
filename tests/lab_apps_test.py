@@ -123,3 +123,9 @@ class LabTests(unittest.TestCase):
   with patch.object(app,'find',return_value={'metadata':{},'spec':{},'status':{'phase':'Bound'}}),patch.object(app,'get',return_value={'items':[{'spec':{'volumes':[{'persistentVolumeClaim':{'claimName':'saved'}}]}}]}),patch.object(app,'apply') as apply:
    with self.assertRaises(ValueError):app.preflight({'name':'cache','type':'redis','namespace':'dev','storage_mode':'existing','pvc':'saved'})
    apply.assert_not_called()
+ def test_storage_location_comes_from_pv_not_pod(self):
+  nodes=[{'metadata':{'name':'worker1','labels':{'kubernetes.io/hostname':'worker1'}},'status':{'addresses':[{'type':'InternalIP','address':'192.168.59.21'}]}}]
+  pv={'spec':{'hostPath':{'path':'/var/lib/rancher/k3s/storage/claim'},'nodeAffinity':{'required':{'nodeSelectorTerms':[{'matchExpressions':[{'key':'kubernetes.io/hostname','operator':'In','values':['worker1']}]}]}}}}
+  location=lab.storage_location(pv,nodes);self.assertEqual(location['nodes'][0]['name'],'worker1');self.assertEqual(location['path'],'/var/lib/rancher/k3s/storage/claim')
+  self.assertEqual(lab.storage_location({'spec':{'hostPath':{'path':'/data'}}},nodes)['nodes'],[])
+  self.assertEqual(lab.storage_location({'spec':{'nfs':{'server':'nas','path':'/export'}}},nodes)['server'],'nas')
