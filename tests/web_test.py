@@ -74,6 +74,9 @@ class ClusterIsolationTests(unittest.TestCase):
                 shutil.copy2(app.ROOT / name, root / name)
             (root / 'vendor').mkdir()
             original = (root / 'ansible/inventory.yml').read_bytes()
+            vm_id = root / '.vagrant/machines/existing-master/virtualbox/id'
+            vm_id.parent.mkdir(parents=True)
+            vm_id.write_text('existing-cluster-vm')
             with patch.object(app, 'ROOT', root):
                 app.CONTEXT.root = root
                 current = app.config()['network']
@@ -84,6 +87,11 @@ class ClusterIsolationTests(unittest.TestCase):
                 self.assertEqual((root / 'ansible/inventory.yml').read_bytes(), original)
                 profile = app.cluster_root('lab2')
                 self.assertFalse((profile / '.vagrant').exists())
+                self.assertEqual(vm_id.read_text(), 'existing-cluster-vm')
+                import subprocess
+                plan = subprocess.run(['ruby', '-rjson', '-e', "require File.expand_path('scripts/web-action',Dir.pwd); m=WebAction.new(Dir.pwd,[]); p={'masters'=>1,'workers'=>2,'server_cpu'=>4,'server_ram'=>4096,'server_disk'=>64,'workers_cpu'=>2,'workers_ram'=>4096,'workers_disk'=>64,'network_mode'=>'existing'}; puts JSON.generate(m.creation_plan(p)[0])"], cwd=profile, capture_output=True, text=True)
+                self.assertEqual(plan.returncode, 0, plan.stderr)
+                self.assertIn('lab2-master1', plan.stdout)
                 self.assertFalse((profile / 'kubeconfig').exists())
                 app.CONTEXT.root = profile
                 result = app.config()

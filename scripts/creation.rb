@@ -69,7 +69,7 @@ module Creation
       old['all']['children'].each do |role,g|
         unchanged &&= g['hosts'].values.all? { |h| h.fetch('vm_cpus',cfg['vm_cpus'][role]) == cpu[role] && h.fetch('vm_memory_mb',cfg['vm_memory_mb'][role]) == ram[role] && h.fetch('vm_disk_gb',cfg.fetch('vm_disk_gb',{}).fetch(role,64)) == disk[role] }
       end
-      raise 'VM уже существуют: для новой сети, диска или состава сначала удалите кластер. CPU/ОЗУ меняйте через «Настроить».' unless unchanged
+      raise 'В выбранном кластере уже есть VM. Для второго кластера нажмите «Новый кластер» и задайте отдельную подсеть. CPU/ОЗУ текущих узлов меняйте через «Настроить», состав — через добавление и удаление узлов. Для смены сети или диска требуется пересоздание выбранного кластера.' unless unchanged
       return [old, {}]
     end
     name_prefix = cfg.fetch('menu_node_prefix','k3s')
