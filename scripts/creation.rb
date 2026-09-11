@@ -13,6 +13,20 @@ module Creation
     IPAddr.new(network.to_i+offset,Socket::AF_INET).to_s
   end
 
+  def add_with_resources(group, params)
+    cfg = settings
+    raise 'Включите embedded etcd для нескольких master' if group == 'server' && !cfg['k3s_embedded_etcd']
+    resources = {}
+    [['cpu', 'vm_cpus', 1, 32], ['ram', 'vm_memory_mb', cfg['rancher_enabled'] ? 4096 : 1024, 65536], ['disk', 'vm_disk_gb', 64, 2048]].each do |input, key, min, max|
+      default = cfg.fetch(key, {}).fetch(group, key == 'vm_disk_gb' ? 64 : min)
+      value = params.fetch(input, default).to_s
+      raise "#{input}: целое число #{min}–#{max}" unless value.match?(/\A[0-9]+\z/) && (min..max).cover?(value.to_i)
+      resources[key] = value.to_i
+    end
+    raise 'Диск больше 64 ГБ поддерживается только с VirtualBox' if resources['vm_disk_gb'] > 64 && cfg['vm_provider'] != 'virtualbox'
+    add_node(group, group == 'server' ? 'master' : 'worker', resources)
+  end
+
   def creation_plan(params)
     cfg = settings
     old = inventory

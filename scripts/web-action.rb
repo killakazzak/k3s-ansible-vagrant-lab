@@ -54,6 +54,8 @@ if $PROGRAM_NAME == __FILE__
     menu = WebAction.new(root, answers)
     if action == 'create' && params.key?('server_cpu')
       menu.create_with_resources(params)
+    elsif ['add_master', 'add_worker'].include?(action)
+      menu.add_with_resources(action == 'add_master' ? 'server' : 'workers', params)
     elsif ['destroy', 'verify'].include?(action)
       menu.run('./cluster.sh', action)
     else

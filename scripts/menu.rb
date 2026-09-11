@@ -145,7 +145,7 @@ class ClusterMenu
     add_node('server', 'master')
   end
 
-  def add_node(group, role)
+  def add_node(group, role, resources = {})
     data = inventory
     name = ask("Имя нового #{role}, например k3s-#{role}3")
     raise 'Имя: строчные латинские буквы, цифры, дефисы; до 63 символов' unless name.match?(/\A[a-z][a-z0-9-]{0,61}[a-z0-9]\z/)
@@ -158,7 +158,7 @@ class ClusterMenu
     raise 'IP должен быть в подсети кластера, не адресом сети или broadcast' unless network.include?(ip) && ip != network.to_range.first && ip != network.to_range.last
     raise 'IP уже занят в inventory' if all.any? { |_, h| h['ansible_host'] == ip_text }
     return unless confirm("Добавить #{name} (#{ip_text}) и применить конфигурацию?")
-    hosts(data, group)[name] = {'ansible_host' => ip_text, 'vagrant_id' => name}
+    hosts(data, group)[name] = {'ansible_host' => ip_text, 'vagrant_id' => name}.merge(resources)
     write(@inventory, YAML.dump(data))
     run('./cluster.sh', 'up', '--verify')
   end

@@ -23,7 +23,17 @@ Dir.mktmpdir do |root|
   end
   FileUtils.mkdir_p(root+'/.vagrant/machines/k3s-master1/virtualbox')
   File.write(root+'/.vagrant/machines/k3s-master1/virtualbox/id','test')
+  def menu.run(*args); end
+  menu.instance_variable_set(:@answers, ['k3s-worker2', '192.168.58.22'])
+  menu.add_with_resources('workers', {'cpu'=>'6','ram'=>'8192','disk'=>'120'})
+  added=menu.inventory['all']['children']['workers']['hosts']['k3s-worker2']
+  assert(added['vm_cpus']==6 && added['vm_memory_mb']==8192 && added['vm_disk_gb']==120)
+  menu.instance_variable_set(:@answers, ['k3s-master2', '192.168.58.12'])
+  menu.add_with_resources('server', {'cpu'=>'4','ram'=>'8192','disk'=>'100'})
+  assert(menu.inventory['all']['children']['server']['hosts']['k3s-master2']['vm_disk_gb']==100)
   before=File.read(root+'/ansible/inventory.yml')
+  begin menu.add_with_resources('workers', {'cpu'=>'0','ram'=>'8192','disk'=>'120'});raise 'accepted bad CPU';rescue RuntimeError=>e;raise if e.message=='accepted bad CPU';end
+  assert(File.read(root+'/ansible/inventory.yml')==before)
   begin menu.creation_plan(p);raise 'accepted mutation';rescue RuntimeError=>e;raise if e.message=='accepted mutation';end
   assert(File.read(root+'/ansible/inventory.yml')==before)
 end
