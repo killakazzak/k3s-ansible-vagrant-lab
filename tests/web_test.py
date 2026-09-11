@@ -63,6 +63,46 @@ class ConsoleTests(unittest.TestCase):
     def test_static_no_path_traversal(self):
         self.assertEqual(self.request('/../ansible/inventory.yml')[0],404)
 
+class ClusterIsolationTests(unittest.TestCase):
+    def test_profiles_and_networks_are_isolated(self):
+        import tempfile, shutil
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for folder in ['ansible', 'scripts', 'web']:
+                shutil.copytree(app.ROOT / folder, root / folder)
+            for name in ['Vagrantfile','cluster.sh','deploy.sh','kubectl.sh','ansible.cfg']:
+                shutil.copy2(app.ROOT / name, root / name)
+            (root / 'vendor').mkdir()
+            original = (root / 'ansible/inventory.yml').read_bytes()
+            with patch.object(app, 'ROOT', root):
+                app.CONTEXT.root = root
+                current = app.config()['network']
+                candidates = ['192.168.60.0/24','192.168.61.0/24','192.168.62.0/24']
+                net = next(n for n in candidates if n != current)
+                app.new_cluster('lab2', net)
+                self.assertEqual(app.cluster_names(), ['default','lab2'])
+                self.assertEqual((root / 'ansible/inventory.yml').read_bytes(), original)
+                profile = app.cluster_root('lab2')
+                self.assertFalse((profile / '.vagrant').exists())
+                self.assertFalse((profile / 'kubeconfig').exists())
+                app.CONTEXT.root = profile
+                result = app.config()
+                self.assertEqual(result['network'], net)
+                self.assertTrue(all(n['name'].startswith('lab2-') for n in result['nodes']))
+                with self.assertRaises(ValueError): app.new_cluster('lab3', net)
+                with self.assertRaises(ValueError): app.cluster_root('../escape')
+                env = app.cluster_env(profile)
+                self.assertEqual(env['VAGRANT_DOTFILE_PATH'], str(profile / '.vagrant'))
+            app.CONTEXT.root = app.ROOT
+    def test_deleted_vms_are_not_reported_as_cluster(self):
+        cfg = {'nodes':[{'name':'one','vagrant_id':'one'}]}
+        with patch.object(app, 'config', return_value=cfg), patch.object(app, 'capture', return_value='0,one,state,not_created') as run:
+            state = app.status()
+            self.assertFalse(state['exists'])
+            self.assertFalse(state['reachable'])
+            self.assertEqual(state['nodes'][0]['state'], 'Absent')
+            self.assertEqual(run.call_count, 1)
+
 class RepeatedLaunchTests(unittest.TestCase):
     def test_reuses_existing_server_and_keeps_private_url(self):
         import tempfile, shutil, subprocess, sys, os

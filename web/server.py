@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Loopback-only cluster console; standard library, no pip dependencies."""
 import argparse
+import re
+import shutil
+import tempfile
 import base64
 import ipaddress
 import fcntl
@@ -20,6 +23,66 @@ ENV = dict(os.environ)
 ENV['PATH'] = ENV.get('PATH', '') + ':/opt/homebrew/bin:/opt/vagrant/bin:/usr/local/bin'
 ENV['VAGRANT_CWD'] = str(ROOT)
 ENV['VAGRANT_DOTFILE_PATH'] = str(ROOT / '.vagrant')
+CONTEXT = threading.local()
+def active_root():
+    return getattr(CONTEXT, 'root', ROOT)
+
+def cluster_root(name):
+    if name == 'default':
+        return ROOT
+    if not re.fullmatch(r'[a-z][a-z0-9-]{0,30}', name):
+        raise ValueError('Некорректное имя кластера')
+    path = ROOT / '.clusters' / name
+    if not path.is_dir() or path.is_symlink():
+        raise ValueError('Кластер не найден')
+    return path
+
+def cluster_names():
+    folder = ROOT / '.clusters'
+    return ['default'] + sorted(p.name for p in folder.iterdir() if p.is_dir() and not p.is_symlink() and re.fullmatch(r'[a-z][a-z0-9-]{0,30}', p.name)) if folder.exists() else ['default']
+
+def cluster_env(root):
+    return dict(ENV, VAGRANT_CWD=str(root), VAGRANT_DOTFILE_PATH=str(root / '.vagrant'))
+
+def new_cluster(name, cidr):
+    if not re.fullmatch(r'[a-z][a-z0-9-]{0,30}', name) or name == 'default':
+        raise ValueError('Имя: строчные латинские буквы, цифры и дефисы, до 31 символа')
+    network = ipaddress.ip_network(cidr, strict=True)
+    if network.version != 4 or network.prefixlen != 24 or not any(network.subnet_of(ipaddress.ip_network(n)) for n in ['10.0.0.0/8','172.16.0.0/12','192.168.0.0/16']):
+        raise ValueError('Для нового профиля задайте частную IPv4-сеть /24')
+    previous = active_root()
+    try:
+        for existing in cluster_names():
+            CONTEXT.root = cluster_root(existing)
+            if network.overlaps(ipaddress.ip_network(config()['network'])):
+                raise ValueError('Сеть пересекается с кластером ' + existing)
+    finally:
+        CONTEXT.root = previous
+    folder = ROOT / '.clusters'
+    folder.mkdir(exist_ok=True, mode=0o700)
+    target = folder / name
+    if target.exists():
+        raise ValueError('Такое имя уже существует')
+    temp = Path(tempfile.mkdtemp(prefix='.new-', dir=folder))
+    try:
+        for directory in ['ansible', 'scripts', 'web']:
+            shutil.copytree(ROOT / directory, temp / directory, ignore=shutil.ignore_patterns('__pycache__', '*.log', '*.retry'))
+        for filename in ['Vagrantfile', 'cluster.sh', 'deploy.sh', 'kubectl.sh', 'ansible.cfg']:
+            shutil.copy2(ROOT / filename, temp / filename)
+        (temp / 'vendor').symlink_to(ROOT / 'vendor', target_is_directory=True)
+        code = """require 'yaml';require 'json'; p=JSON.parse(STDIN.read); path='ansible/group_vars/all.yml'; s=File.read(path); {'vm_name_prefix'=>p['name']+'-', 'menu_node_prefix'=>p['name'], 'private_network_prefix'=>24}.each{|k,v| s=s.sub(/^#{k}:.*$/,k+': '+JSON.generate(v))}; File.write(path,s); groups={}; {'server'=>[11,'master',1], 'workers'=>[21,'worker',2]}.each{|role,(offset,label,count)| h={};count.times{|i| n=p['name']+'-'+label+(i+1).to_s;h[n]={'ansible_host'=>p['base']+(offset+i).to_s,'vagrant_id'=>n}};groups[role]={'hosts'=>h}};File.write('ansible/inventory.yml',YAML.dump({'all'=>{'children'=>groups}}))"""
+        proc = subprocess.run(['ruby','-e',code], cwd=temp, input=json.dumps({'name':name,'base':str(network.network_address).rsplit('.',1)[0]+'.'}), capture_output=True, text=True)
+        if proc.returncode:
+            raise ValueError('Не удалось создать конфигурацию: '+proc.stderr)
+        # Validate the new network against Kubernetes pod/service subnets too.
+        cfg = json.loads(subprocess.check_output(['ruby','-ryaml','-rjson','-e',"puts JSON.generate(YAML.load_file('ansible/group_vars/all.yml'))"],cwd=temp,text=True))
+        if any(network.overlaps(ipaddress.ip_network(cfg[k])) for k in ['pod_subnet','service_subnet']):
+            raise ValueError('Сеть пересекается с pod/service сетью')
+        temp.rename(target)
+    finally:
+        if temp.exists(): shutil.rmtree(temp)
+    return {'name': name}
+
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.Lock()
 JOB = None
@@ -28,7 +91,7 @@ DESTRUCTIVE = {'destroy', 'remove_master', 'remove_worker', 'version'}
 
 
 def capture(args, timeout=15):
-    p = subprocess.run(args, cwd=ROOT, env=ENV, capture_output=True, text=True, timeout=timeout)
+    p = subprocess.run(args, cwd=active_root(), env=cluster_env(active_root()), capture_output=True, text=True, timeout=timeout)
     if p.returncode:
         raise RuntimeError(p.stderr.strip() or p.stdout.strip() or 'Команда завершилась с ошибкой')
     return p.stdout
@@ -45,7 +108,7 @@ def config():
             nodes.append(dict(name=name, role=role, ip=host['ansible_host'],
                               cpu=host.get('vm_cpus', cfg['vm_cpus'][role]),
                               ram=host.get('vm_memory_mb', cfg['vm_memory_mb'][role]),
-                              disk=host.get('vm_disk_gb', cfg.get('vm_disk_gb', {}).get(role,64))))
+                              disk=host.get('vm_disk_gb', cfg.get('vm_disk_gb', {}).get(role,64)), vagrant_id=host['vagrant_id']))
     return dict(nodes=nodes, network=str(ipaddress.ip_network(str(nodes[0]['ip'])+'/'+str(cfg['private_network_prefix']), strict=False)), version=cfg['k3s_version'], provider=cfg['vm_provider'],
                 rancher=cfg.get('rancher_enabled', False), traefik=cfg.get('traefik_dashboard_enabled', False)
                 and 'traefik' not in cfg['disabled_components'])
@@ -55,6 +118,18 @@ def status():
     result = config()
     result['reachable'] = False
     result['error'] = None
+    try:
+        output = capture(['vagrant', 'status', '--machine-readable'], 20)
+        states = {line.split(',')[1]: line.split(',')[3] for line in output.splitlines() if len(line.split(',')) >= 4 and line.split(',')[2] == 'state'}
+        for node in result['nodes']:
+            node['vm_state'] = states.get(node['vagrant_id'], 'unknown')
+        result['exists'] = any(n['vm_state'] != 'not_created' for n in result['nodes'])
+    except Exception:
+        result['exists'] = None
+        for node in result['nodes']: node['vm_state'] = 'unknown'
+    if result['exists'] is False:
+        for node in result['nodes']: node['state'] = 'Absent'
+        return result
     try:
         live = json.loads(capture(['./kubectl.sh', 'get', 'nodes', '-o', 'json', '--request-timeout=5s'], 8))
         lookup = {n['metadata']['name']: n for n in live['items']}
@@ -96,7 +171,20 @@ def credentials(service):
 
 def execute(job, payload):
     try:
-        p = subprocess.Popen(['ruby', 'scripts/web-action.rb'], cwd=ROOT, env=ENV, stdin=subprocess.PIPE,
+        name = job.get('cluster', 'default')
+        root = cluster_root(name)
+        CONTEXT.root = root
+        if payload['action'] == 'create' and payload.get('params', {}).get('network_mode') == 'new':
+            proposed = ipaddress.ip_network(payload['params']['network'], strict=True)
+            try:
+                for other in cluster_names():
+                    if other == name: continue
+                    CONTEXT.root = cluster_root(other)
+                    if proposed.overlaps(ipaddress.ip_network(config()['network'])):
+                        raise ValueError('Сеть пересекается с кластером ' + other)
+            finally:
+                CONTEXT.root = root
+        p = subprocess.Popen(['ruby', 'scripts/web-action.rb'], cwd=root, env=cluster_env(root), stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         p.stdin.write(json.dumps(payload))
         p.stdin.close()
@@ -144,6 +232,11 @@ class Handler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(self.headers.get('X-Lab-Token', ''), TOKEN):
             self.reply(401, {'error': 'Откройте полный адрес из терминала запуска, включая #token=…'})
             return False
+        try:
+            CONTEXT.root = cluster_root(self.headers.get('X-Lab-Cluster', 'default'))
+        except ValueError as e:
+            self.reply(400, {'error': str(e)})
+            return False
         return True
 
     def do_GET(self):
@@ -156,6 +249,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed():
             return
         try:
+            if path == '/api/clusters':
+                return self.reply(200, cluster_names())
             if path in ('/api/credentials/rancher', '/api/credentials/traefik'):
                 return self.reply(200, credentials(path.rsplit('/', 1)[1]))
             if path == '/api/status':
@@ -174,13 +269,18 @@ class Handler(BaseHTTPRequestHandler):
         global JOB
         if not self.allowed():
             return
-        if self.path != '/api/action':
+        if self.path not in ('/api/action', '/api/clusters'):
             return self.reply(404, {'error': 'Не найдено'})
         try:
             length = int(self.headers.get('Content-Length', 0))
             if not 0 < length <= 8192:
                 raise ValueError('Некорректный размер запроса')
             data = json.loads(self.rfile.read(length))
+            if self.path == '/api/clusters':
+                with LOCK:
+                    if JOB and JOB['state'] == 'running':
+                        return self.reply(409, {'error':'Дождитесь текущей операции'})
+                    return self.reply(201, new_cluster(data.get('name', ''), data.get('network', '')))
             action = data.get('action')
             if action not in ACTIONS or data.get('confirmed') is not True:
                 raise ValueError('Неизвестная операция или нет подтверждения')
@@ -191,7 +291,7 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 if JOB and JOB['state'] == 'running':
                     return self.reply(409, {'error': 'Дождитесь завершения текущей операции'})
-                JOB = dict(id=secrets.token_hex(8), action=action, state='running', log='', started=time.time())
+                JOB = dict(cluster=self.headers.get('X-Lab-Cluster', 'default'), id=secrets.token_hex(8), action=action, state='running', log='', started=time.time())
                 threading.Thread(target=execute, args=(JOB, data), daemon=True).start()
             self.reply(202, {'ok': True})
         except (ValueError, TypeError) as e:

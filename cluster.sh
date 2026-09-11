@@ -3,6 +3,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+if [[ "${1:-}" == "--cluster" ]]; then
+  name="${2:-}"
+  [[ "$name" =~ ^[a-z][a-z0-9-]{0,30}$ && -f "$ROOT/.clusters/$name/cluster.sh" ]] || { echo 'Unknown cluster'; exit 2; }
+  shift 2
+  exec "$ROOT/.clusters/$name/cluster.sh" "$@"
+fi
 # Keep lifecycle operations scoped to this checkout, even with Vagrant overrides.
 export VAGRANT_CWD="$ROOT"
 export VAGRANT_DOTFILE_PATH="$ROOT/.vagrant"

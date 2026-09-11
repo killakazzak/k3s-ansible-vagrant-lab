@@ -116,6 +116,13 @@ class ClusterMenu
 
   def show
     cfg = settings
+    begin
+      output = capture('vagrant', 'status', '--machine-readable')
+      states = output.lines.map { |line| line.strip.split(',') }.select { |parts| parts[2] == 'state' }.map { |parts| [parts[1], parts[3]] }.to_h
+      puts(states.values.all? { |v| v == 'not_created' } && !states.empty? ? "\nКластер не создан / ВМ удалены. Ниже сохранённая конфигурация для развёртывания." : "\nСостояние ВМ: #{states.map { |k,v| k + ': ' + v }.join(', ')}")
+    rescue StandardError
+      puts "\nСостояние ВМ проверить не удалось. Ниже только сохранённая конфигурация."
+    end
     puts "\nВерсия: #{cfg['k3s_version']}; провайдер: #{cfg['vm_provider']}"
     inventory['all']['children'].each do |group, entry|
       entry['hosts'].each do |name, host|
