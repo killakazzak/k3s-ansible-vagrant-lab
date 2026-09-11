@@ -31,6 +31,29 @@ def main():
         hosts=[p[3] for p in prepared if p[3]]
         if len(set(hosts))!=len(hosts):raise ValueError('Повторяются hostname приложений')
         for c,plan in zip(validated,prepared):apps.deploy(c,plan)
+    elif action in ('app_stop','app_restart'):
+        from lab_apps import dns, MANAGER
+        targets=params.get('apps',[])
+        if not isinstance(targets,list) or not 1<=len(targets)<=50:raise ValueError('Выберите от 1 до 50 приложений')
+        workloads={}
+        for target in targets:
+            kind=target.get('kind');ns=namespace(target.get('namespace'),True);name=dns(target.get('name'))
+            if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный тип приложения')
+            obj=apps.get(kind,ns,name);workloads[(kind,ns,name)]=obj
+            if obj['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER:
+                panel=apps.find('Deployment',ns,name+'-ui')
+                if panel and panel['metadata'].get('labels',{}).get('lab.k3s/panel-for')==name and panel['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER:
+                    workloads[('Deployment',ns,name+'-ui')]=panel
+        for (kind,ns,name),obj in workloads.items():
+            target=kind.lower()+'/'+name
+            print('TASK ['+action+' '+ns+'/'+name+']',flush=True)
+            if action=='app_stop':
+                print(apps.kubectl(['scale',target,'-n',ns,'--replicas=0']),flush=True)
+            elif obj.get('spec',{}).get('replicas',1)==0:
+                print('Пропущено: приложение остановлено (0 реплик). Для запуска измените число реплик.',flush=True)
+            else:
+                print(apps.kubectl(['rollout','restart',target,'-n',ns]),flush=True)
+                print(apps.wait_rollout(kind,name,ns,300),flush=True)
     elif action=='app_delete':
         targets=params.get('apps')
         if targets is None:apps.delete(params)

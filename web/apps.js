@@ -159,7 +159,11 @@ $('template-from-apps').onclick=async()=>{
 };
 
 function appKey(a){return a.namespace+'/'+a.kind+'/'+a.name}
-function updateBulk(){const n=selectedApps.size;$('apps-delete-selected').textContent='Удалить выбранные'+(n?' · '+n:'');$('apps-delete-selected').disabled=busy||!n;$('apps-clear-selected').hidden=!n}
+function updateBulk(){const n=selectedApps.size;for(const [id,label] of [['apps-delete-selected','Удалить выделенное'],['apps-stop-selected','Остановить выделенное'],['apps-restart-selected','Перезапустить выделенное']]){$(id).textContent=label+(n?' · '+n:'');$(id).disabled=busy||!n}$('apps-clear-selected').hidden=!n}
 $('apps-clear-selected').onclick=()=>{selectedApps.clear();refreshApps();updateBulk()};
 $('apps-delete-selected').onclick=()=>{const items=[...selectedApps.values()];if(!items.length)return;labOpen('Удалить выбранные приложения?','Кластер '+selectedCluster+'. PVC и пароли сохранятся. Для приложений каталога также удалятся их сервисы, Ingress и веб-панели.',async data=>{sameCluster();await api('action',{action:'app_delete',confirmed:true,confirmation:data.confirmation,params:{apps:items.map(a=>({kind:a.kind,name:a.name,namespace:a.namespace}))}});selectedApps.clear();$('lab-dialog').close();updateBulk();await poll()});for(const a of items)$('lab-extra').append(element('p',a.namespace+'/'+a.name+' · '+a.kind,'lab-note'));labField('confirmation','Введите УДАЛИТЬ','')};
 setInterval(updateBulk,1000);
+
+function bulkLifecycle(action){const items=[...selectedApps.values()];if(!items.length)return;labOpen(action==='app_stop'?'Остановить выделенные приложения?':'Перезапустить выделенные приложения?',action==='app_stop'?'Приложения и их веб-панели будут уменьшены до 0 реплик. Данные сохранятся. Для запуска затем измените число реплик.':'Pod приложений и веб-панелей будут перезапущены последовательно. Возможен перерыв в доступности. Остановленные приложения с 0 реплик останутся остановленными.',async()=>{sameCluster();await api('action',{action,confirmed:true,params:{apps:items.map(a=>({kind:a.kind,name:a.name,namespace:a.namespace}))}});$('lab-dialog').close();await poll()});for(const a of items)$('lab-extra').append(element('p',a.namespace+'/'+a.name+' · '+a.kind,'lab-note'))}
+$('apps-stop-selected').onclick=()=>bulkLifecycle('app_stop');
+$('apps-restart-selected').onclick=()=>bulkLifecycle('app_restart');
