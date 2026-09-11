@@ -39,11 +39,15 @@ case "$command_name" in
     case "$command_name" in
       destroy)
         command -v vagrant >/dev/null || { echo 'Vagrant is required to delete the VMs.' >&2; exit 1; }
-        vagrant destroy -f
-        rm -f "$ROOT/kubeconfig"
-        echo 'Cluster VMs deleted. Download caches retained.'
+        ruby "$ROOT/scripts/destroy-cluster.rb"
         ;;
-      status) exec vagrant status ;;
+      status)
+        if ruby -ryaml -e "exit(YAML.load_file('ansible/inventory.yml')['all']['children'].values.all? { |g| g['hosts'].empty? } ? 0 : 1)"; then
+          echo 'Кластер пуст. В inventory нет узлов.'
+        else
+          exec vagrant status
+        fi
+        ;;
       verify) exec ansible-playbook ansible/verify.yml ;;
     esac
     ;;

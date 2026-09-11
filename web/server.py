@@ -109,7 +109,7 @@ def config():
                               cpu=host.get('vm_cpus', cfg['vm_cpus'][role]),
                               ram=host.get('vm_memory_mb', cfg['vm_memory_mb'][role]),
                               disk=host.get('vm_disk_gb', cfg.get('vm_disk_gb', {}).get(role,64)), vagrant_id=host['vagrant_id']))
-    return dict(nodes=nodes, network=str(ipaddress.ip_network(str(nodes[0]['ip'])+'/'+str(cfg['private_network_prefix']), strict=False)), version=cfg['k3s_version'], provider=cfg['vm_provider'],
+    return dict(nodes=nodes, defaults={role:dict(cpu=cfg['vm_cpus'][role],ram=cfg['vm_memory_mb'][role],disk=cfg.get('vm_disk_gb',{}).get(role,64)) for role in ['server','workers']}, network=str(ipaddress.ip_network(str(nodes[0]['ip'])+'/'+str(cfg['private_network_prefix']) if nodes else cfg.get('private_network_cidr','192.168.58.0/24'), strict=False)), version=cfg['k3s_version'], provider=cfg['vm_provider'],
                 rancher=cfg.get('rancher_enabled', False), traefik=cfg.get('traefik_dashboard_enabled', False)
                 and 'traefik' not in cfg['disabled_components'])
 
@@ -118,6 +118,9 @@ def status():
     result = config()
     result['reachable'] = False
     result['error'] = None
+    if not result['nodes']:
+        result['exists'] = False
+        return result
     try:
         output = capture(['vagrant', 'status', '--machine-readable'], 20)
         states = {line.split(',')[1]: line.split(',')[3] for line in output.splitlines() if len(line.split(',')) >= 4 and line.split(',')[2] == 'state'}
@@ -146,6 +149,8 @@ def status():
 
 
 def links():
+    if not config()['nodes']:
+        return {}
     # Render configurable Jinja hostnames with Ansible, just like deployment does.
     output = capture(['ansible', 'server', '--limit', config()['nodes'][0]['name'], '-m', 'ansible.builtin.debug', '-a',
                       json.dumps({'msg': 'RANCHER_URL=https://{{ rancher_hostname }} TRAEFIK_URL=https://{{ traefik_dashboard_hostname }}/dashboard/'})], 20)

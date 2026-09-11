@@ -3,6 +3,7 @@ module Creation
   def next_node_ip(role)
     cfg = settings
     entries = inventory['all']['children'].values.flat_map { |g| g['hosts'].values }
+    raise 'Кластер пуст. Сначала создайте кластер.' if entries.empty?
     network = IPAddr.new("#{entries.first['ansible_host']}/#{cfg['private_network_prefix']}")
     used = entries.map { |h| h['ansible_host'] }
     start = role == 'server' ? 11 : 21
@@ -45,7 +46,8 @@ module Creation
       disk[role] = int.call("#{role}_disk", 64, 2048)
     end
     raise 'Диск больше 64 ГБ поддерживается только с VirtualBox' if cfg['vm_provider'] != 'virtualbox' && disk.values.any? { |v| v > 64 }
-    current = IPAddr.new("#{hosts(old, 'server').values.first['ansible_host']}/#{cfg['private_network_prefix']}")
+    first = hosts(old, 'server').values.first
+    current = IPAddr.new(first ? "#{first['ansible_host']}/#{cfg['private_network_prefix']}" : cfg.fetch('private_network_cidr', '192.168.58.0/24'))
     mode = params.fetch('network_mode')
     raise 'Неверный режим сети' unless %w[existing new].include?(mode)
     cidr = mode == 'existing' ? "#{current}/#{cfg['private_network_prefix']}" : params.fetch('network').to_s

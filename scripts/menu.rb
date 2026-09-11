@@ -4,8 +4,10 @@ require 'ipaddr'
 require 'fileutils'
 require 'json'
 require 'open3'
+require_relative 'creation'
 
 class ClusterMenu
+  include Creation
   def initialize(root)
     @root = root
     @settings = File.join(root, 'ansible/group_vars/all.yml')
@@ -43,6 +45,17 @@ class ClusterMenu
 
   def create_cluster
     data = inventory
+    if hosts(data, 'server').empty?
+      cfg = settings
+      params = {'masters'=>count('Сколько master',1,7),'workers'=>count('Сколько workers',2,32),'network_mode'=>'existing'}
+      %w[server workers].each do |role|
+        params[role+'_cpu'] = cfg['vm_cpus'][role]
+        params[role+'_ram'] = cfg['vm_memory_mb'][role]
+        params[role+'_disk'] = cfg.fetch('vm_disk_gb',{}).fetch(role,64)
+      end
+      return unless confirm('Создать новый кластер с указанным числом узлов и ресурсами по умолчанию?')
+      return create_with_resources(params)
+    end
     masters = count('Сколько master', hosts(data, 'server').length, 7)
     workers = count('Сколько workers', hosts(data, 'workers').length, 32)
     raise 'Для нескольких master включите k3s_embedded_etcd' if masters > 1 && !settings['k3s_embedded_etcd']
@@ -116,6 +129,10 @@ class ClusterMenu
 
   def show
     cfg = settings
+    if inventory['all']['children'].values.all? { |g| g['hosts'].empty? }
+      puts "\nКластер пуст. Inventory не содержит узлов. Для создания выберите пункт 1."
+      return
+    end
     begin
       output = capture('vagrant', 'status', '--machine-readable')
       states = output.lines.map { |line| line.strip.split(',') }.select { |parts| parts[2] == 'state' }.map { |parts| [parts[1], parts[3]] }.to_h
@@ -155,6 +172,7 @@ class ClusterMenu
 
   def add_node(group, role, resources = {})
     data = inventory
+    raise 'Кластер пуст. Сначала создайте кластер.' if hosts(data, 'server').empty?
     name = ask("Имя нового #{role}, например k3s-#{role}3")
     raise 'Имя: строчные латинские буквы, цифры, дефисы; до 63 символов' unless name.match?(/\A[a-z][a-z0-9-]{0,61}[a-z0-9]\z/)
     all = data['all']['children'].values.flat_map { |g| g['hosts'].to_a }
@@ -266,6 +284,7 @@ class ClusterMenu
     return puts('Эта версия уже указана в настройках.') if value == settings['k3s_version']
     # Validate the release before touching VMs or configuration.
     run('curl', '--fail', '--silent', '--show-error', '--location', '--head', '--connect-timeout', '10', '--max-time', '30', '--output', '/dev/null', "https://github.com/k3s-io/k3s/releases/download/#{value}/sha256sum-arm64.txt")
+    saved_inventory = inventory
     existing = !Dir.glob(File.join(@root, '.vagrant/machines/*/*/id')).empty?
     if existing
       puts 'Смена версии в этом меню выполняется пересозданием лаборатории, все данные VM будут удалены.'
@@ -274,8 +293,13 @@ class ClusterMenu
     else
       return unless confirm("Создать кластер на #{value}?")
     end
+    write(@inventory, YAML.dump(saved_inventory)) if existing
     set_values('k3s_version' => value, 'allow_version_change' => false)
-    run('./cluster.sh', 'up', '--verify')
+    if hosts(inventory, 'server').empty?
+      create_cluster
+    else
+      run('./cluster.sh', 'up', '--verify')
+    end
   end
 
   def start
