@@ -538,6 +538,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(409, {'error':'Веб-сервер завершает работу.'})
             if self.path == '/api/templates':
                 with LOCK:
+                    operation=data.get('operation','save')
+                    if operation=='delete':return self.reply(200, lab_apps.delete_template(data))
+                    if operation=='from_apps':return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).template_from_apps(data))
+                    if operation!='save':raise ValueError('Неизвестная операция с шаблоном')
                     return self.reply(200, lab_apps.save_template(data))
             if self.path == '/api/app-access':
                 return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).access(data))

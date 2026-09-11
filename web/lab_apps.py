@@ -64,6 +64,13 @@ def save_template(data):
     apps=[validate(c) for c in items]
     if len({(a['namespace'],a['name']) for a in apps})!=len(apps):raise ValueError('Имена приложений в namespace должны отличаться')
     values=[v for v in templates() if v['name']!=name]+[dict(name=name,apps=apps)]
+    return write_templates(values)
+
+def delete_template(data):
+    name=dns(data.get('name',''),'имя шаблона')
+    return write_templates([v for v in templates() if v['name']!=name])
+
+def write_templates(values):
     folder=ROOT/'.cache';folder.mkdir(exist_ok=True)
     fd,temp=tempfile.mkstemp(dir=folder,prefix='templates-')
     try:
@@ -106,6 +113,45 @@ class Apps:
         return json.loads(self.kubectl(['get',resource,name]+(['-n',ns] if ns else [])+['--ignore-not-found','-o','json','--request-timeout=10s']) or 'null')
     def apply(self,objects):
         self.kubectl(['apply','--server-side','--field-manager='+MANAGER,'-f','-'],{'apiVersion':'v1','kind':'List','items':objects})
+    def template_from_apps(self,data):
+        import math
+        selected=data.get('selected',[])
+        if not isinstance(selected,list) or not 1<=len(selected)<=10:raise ValueError('Выберите от 1 до 10 приложений')
+        configs=[]
+        def amount(value,unit):
+            match=re.fullmatch(r'([0-9.]+)([a-zA-Z]*)',str(value))
+            if not match:raise ValueError('Неподдерживаемый формат ресурсов: '+str(value))
+            number,suffix=match.groups()
+            factors={'':1,'m':.001,'Ki':1024,'Mi':1024**2,'Gi':1024**3,'Ti':1024**4,'K':1000,'M':1000**2,'G':1000**3}
+            if suffix not in factors:raise ValueError('Неподдерживаемая единица ресурсов')
+            return math.ceil(float(number)*factors[suffix]/unit)
+        for item in selected:
+            kind=item.get('kind');ns=namespace(item.get('namespace'),True);name=dns(item.get('name'))
+            if kind not in ('Deployment','StatefulSet'):raise ValueError('Неподдерживаемая рабочая нагрузка')
+            obj=self.get(kind,ns,name);labels=obj['metadata'].get('labels',{})
+            if labels.get('app.kubernetes.io/managed-by')!=MANAGER or labels.get('lab.k3s/panel-for'):raise ValueError('В шаблон можно включить приложения, установленные через каталог')
+            containers=obj['spec']['template']['spec']['containers']
+            if len(containers)!=1:raise ValueError('Наборы с несколькими контейнерами пока не поддерживаются')
+            c=containers[0];ctype=labels.get('lab.k3s/type','custom');requests=c.get('resources',{}).get('requests',{})
+            config=dict(type=ctype,name=name,namespace=ns,image=c['image'],replicas=obj['spec'].get('replicas',1),cpu=amount(requests.get('cpu','100m'),.001),memory=amount(requests.get('memory','256Mi'),1024**2),port=c.get('ports',[{'containerPort':8080}])[0]['containerPort'],host='',storage_mode='none')
+            claims=obj['spec'].get('volumeClaimTemplates',[])
+            if claims:
+                size=claims[0]['spec']['resources']['requests']['storage']
+                config.update(storage_mode='new',storage=amount(size,1024**3))
+            else:
+                volumes=obj['spec']['template']['spec'].get('volumes',[])
+                claims=[v for v in volumes if 'persistentVolumeClaim' in v]
+                if len(claims)>1:raise ValueError('Шаблоны с несколькими PVC пока не поддерживаются')
+                if claims:
+                    claim=claims[0];pvc=self.get('pvc',ns,claim['persistentVolumeClaim']['claimName'])
+                    config.update(storage_mode='new',storage=amount(pvc['spec']['resources']['requests']['storage'],1024**3))
+                    mount=next((v['mountPath'] for v in c.get('volumeMounts',[]) if v['name']==claim['name']),'/data')
+                    config['mount_path']=mount
+            routes=self.get('ingress',ns)['items']
+            if any(p.get('backend',{}).get('service',{}).get('name')==name for i in routes for rule in i.get('spec',{}).get('rules',[]) for p in rule.get('http',{}).get('paths',[])):config['host']=name
+            configs.append(validate(config))
+        return save_template(dict(name=data.get('name'),apps=configs))
+
     def listing(self):
         items=self.get('deployments.apps,statefulsets.apps')['items'];out=[]
         routes=self.get('ingress')['items']

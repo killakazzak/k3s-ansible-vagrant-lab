@@ -18,6 +18,26 @@ class LabTests(unittest.TestCase):
   with patch.object(app,'kubectl',side_effect=ValueError('original failure')),patch.object(app,'workload_pods',side_effect=ValueError('API unavailable')):
    with self.assertRaisesRegex(ValueError,'original failure'):app.wait_rollout('Deployment','web','dev')
 
+ def test_delete_template_preserves_other_templates(self):
+  with tempfile.TemporaryDirectory() as folder,patch.object(lab,'ROOT',Path(folder)):
+   for name in ('one','two'):lab.save_template({'name':name,'apps':[{'name':'web','namespace':'dev'}]})
+   lab.delete_template({'name':'one'})
+   self.assertEqual([t['name'] for t in lab.templates()],['two'])
+ def test_capture_template_copies_config_without_secrets_or_data(self):
+  app=lab.Apps('/tmp');c,k,objects,h=app.plan({'type':'postgres','name':'db','namespace':'dev','memory':512,'cpu':200})
+  obj=next(o for o in objects if o['kind']==k)
+  with patch.object(app,'get',side_effect=[obj,{'items':[]}]),patch.object(lab,'save_template') as save:
+   app.template_from_apps({'name':'stand','selected':[{'kind':k,'name':'db','namespace':'dev'}]})
+   config=save.call_args.args[0]['apps'][0]
+   self.assertEqual(config['memory'],512);self.assertEqual(config['cpu'],200)
+   self.assertEqual(config['storage_mode'],'new');self.assertEqual(config['storage_secret'],'')
+   self.assertNotIn('env',config);self.assertEqual(config['image'],'postgres:18.6-alpine')
+ def test_capture_rejects_unmanaged_workload(self):
+  app=lab.Apps('/tmp')
+  with patch.object(app,'get',return_value={'metadata':{'labels':{}}}),patch.object(lab,'save_template') as save:
+   with self.assertRaises(ValueError):app.template_from_apps({'name':'stand','selected':[{'kind':'Deployment','name':'web','namespace':'dev'}]})
+   save.assert_not_called()
+
  def test_manifest_and_validation(self):
   app=lab.Apps('/tmp')
   c,k,objects,h=app.plan(dict(type='postgres',name='db',namespace='dev'))

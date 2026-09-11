@@ -134,3 +134,14 @@ function renderSecrets(){
 async function refreshSecrets(){const cluster=selectedCluster;try{const data=await api('secret-info');if(cluster!==selectedCluster)return;secretData=data;renderSecrets();}catch(e){if(cluster===selectedCluster)$('secret-list').textContent=e.message}}
 $('secret-namespace').onchange=()=>{secretNamespaces.set(selectedCluster,$('secret-namespace').value);renderSecrets()};
 $('secret-refresh').onclick=refreshSecrets;$('cluster-select').addEventListener('change',()=>{secretData=[];$('secret-list').replaceChildren();refreshSecrets()});setInterval(()=>{if(!document.hidden)refreshSecrets()},15000);refreshSecrets();
+
+$('template-delete').onclick=()=>{const name=$('template-list').value;if(!name)return;labOpen('Удалить шаблон «'+name+'»?','Будет удалён только сохранённый набор. Установленные приложения и их данные сохранятся.',async()=>{await api('templates',{operation:'delete',name});$('lab-dialog').close();await loadTemplates()})};
+$('template-from-apps').onclick=async()=>{
+ const cluster=selectedCluster;
+ try{const apps=(await api('apps')).filter(a=>a.managed);if(cluster!==selectedCluster)return;
+ labOpen('Шаблон из приложений','Сохраняются образы, реплики, запросы CPU/RAM и размеры дисков. Лимиты при развёртывании = 2 × запрос. Диски будут новыми, пароли сгенерируются заново, URL получат адрес нового кластера. Данные, Secrets и произвольные настройки не копируются.',async data=>{const selected=[...$('lab-extra').querySelectorAll('input:checked')].map(i=>{const a=apps[Number(i.value)];return {kind:a.kind,name:a.name,namespace:a.namespace}});if(!selected.length)throw Error('Выберите приложения');await api('templates',{operation:'from_apps',name:data.name,selected});$('lab-dialog').close();await loadTemplates()});
+ labField('name','Имя шаблона','my-stand');
+ if(!apps.length)$('lab-extra').append(element('p','Нет приложений из каталога в выбранном кластере.'));
+ apps.forEach((a,i)=>{const label=element('label',undefined,'template-app-choice');const input=document.createElement('input');input.type='checkbox';input.value=i;const text=element('span',a.namespace+'/'+a.name);text.append(element('small',a.containers.map(c=>c.image).join(', ')));label.append(input,text);$('lab-extra').append(label)});
+ }catch(e){$('apps-message').textContent=e.message}
+};
