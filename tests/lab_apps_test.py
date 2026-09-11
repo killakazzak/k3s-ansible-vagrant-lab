@@ -38,6 +38,17 @@ class LabTests(unittest.TestCase):
    with self.assertRaises(ValueError):app.template_from_apps({'name':'stand','selected':[{'kind':'Deployment','name':'web','namespace':'dev'}]})
    save.assert_not_called()
 
+ def test_bulk_delete_validates_all_before_deleting(self):
+  import lab_action,io,json
+  targets=[dict(kind='Deployment',namespace='dev',name=n) for n in ('one','two')]
+  payload={'action':'app_delete','params':{'apps':targets}}
+  with patch.object(sys,'argv',['lab_action.py','/tmp']),patch.object(sys,'stdin',io.StringIO(json.dumps(payload))),patch.object(lab.Apps,'get',side_effect=[{},ValueError('missing')]),patch.object(lab.Apps,'delete') as delete:
+   with self.assertRaises(ValueError):lab_action.main()
+   delete.assert_not_called()
+  with patch.object(sys,'argv',['lab_action.py','/tmp']),patch.object(sys,'stdin',io.StringIO(json.dumps(payload))),patch.object(lab.Apps,'get',return_value={}),patch.object(lab.Apps,'delete') as delete:
+   lab_action.main()
+   self.assertEqual([c.args[0] for c in delete.call_args_list],[dict(t,delete_data=False) for t in targets])
+
  def test_manifest_and_validation(self):
   app=lab.Apps('/tmp')
   c,k,objects,h=app.plan(dict(type='postgres',name='db',namespace='dev'))

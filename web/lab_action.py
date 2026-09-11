@@ -32,7 +32,21 @@ def main():
         if len(set(hosts))!=len(hosts):raise ValueError('Повторяются hostname приложений')
         for c,plan in zip(validated,prepared):apps.deploy(c,plan)
     elif action=='app_delete':
-        apps.delete(params)
+        targets=params.get('apps')
+        if targets is None:apps.delete(params)
+        else:
+            if not isinstance(targets,list) or not 1<=len(targets)<=50:raise ValueError('Выберите от 1 до 50 приложений')
+            checked=[]
+            for target in targets:
+                kind=target.get('kind');ns=namespace(target.get('namespace'),True);name=target.get('name')
+                if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный тип приложения')
+                from lab_apps import dns
+                name=dns(name);apps.get(kind,ns,name)
+                item=dict(kind=kind,namespace=ns,name=name,delete_data=False)
+                if item not in checked:checked.append(item)
+            for target in checked:
+                print('TASK [Удалить '+target['namespace']+'/'+target['name']+']',flush=True)
+                apps.delete(target)
     elif action in ('app_update','app_rollback','app_check'):
         print('TASK ['+action+']',flush=True)
         if action=='app_check':
