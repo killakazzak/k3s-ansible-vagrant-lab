@@ -10,8 +10,11 @@ def main():
         ids=list((root/'.vagrant/machines').glob('*/*/id'))
         if not ids:raise ValueError('Сохранённые VM не найдены. Сначала создайте кластер.')
         targets=sorted({p.parents[1].name for p in ids})
+        selected=params.get('nodes',targets)
+        if not isinstance(selected,list) or not selected or any(not isinstance(n,str) or n not in targets for n in selected):raise ValueError('Выберите существующие VM этого кластера')
+        targets=sorted(set(selected))
         subprocess.run((['vagrant','halt'] if action=='stand_stop' else ['vagrant','up','--no-provision'])+targets,cwd=root,check=True,timeout=600)
-        if action=='stand_start':print(apps.kubectl(['wait','--for=condition=Ready','nodes','--all','--timeout=180s'],timeout=190),flush=True)
+        if action=='stand_start':print('Выбранные VM запущены. Готовность Kubernetes смотрите в статусе: API требует работающего control plane.',flush=True)
     elif action in ('app_deploy','template_deploy'):
         configs=params.get('apps',[])
         if action=='template_deploy':

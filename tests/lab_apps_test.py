@@ -41,3 +41,30 @@ class LabTests(unittest.TestCase):
    data=app.diagnostics({'name':'web','namespace':'dev'})
    self.assertEqual(data['statuses'][0]['restarts'],3)
    self.assertNotIn('hidden',str(data))
+
+ def test_selected_vm_scope(self):
+  import lab_action, io, json
+  with tempfile.TemporaryDirectory() as folder:
+   root=Path(folder)
+   for name in ('master','worker'):
+    path=root/'.vagrant/machines'/name/'virtualbox';path.mkdir(parents=True);(path/'id').write_text('fixture')
+   for action,verb in [('stand_stop','halt'),('stand_start','up')]:
+    with patch.object(sys,'argv',['lab_action.py',str(root)]),patch.object(sys,'stdin',io.StringIO(json.dumps({'action':action,'params':{'nodes':['worker']}}))),patch.object(lab_action.subprocess,'run') as run:
+     lab_action.main();self.assertEqual(run.call_args[0][0],['vagrant',verb]+(['--no-provision'] if verb=='up' else [])+['worker'])
+   for selected in ([],['unknown'],['--help'],'worker'):
+    with patch.object(sys,'argv',['lab_action.py',str(root)]),patch.object(sys,'stdin',io.StringIO(json.dumps({'action':'stand_stop','params':{'nodes':selected}}))),patch.object(lab_action.subprocess,'run') as run:
+     with self.assertRaises(ValueError):lab_action.main()
+     run.assert_not_called()
+ def test_broker_manifests(self):
+  app=lab.Apps('/tmp')
+  for broker in ('kafka','rabbitmq'):
+   with patch.object(app,'host',return_value='mq.example.test' if broker=='rabbitmq' else ''):
+    c,k,objects,host=app.plan({'name':broker,'type':broker,'namespace':'dev'})
+   self.assertEqual(k,'StatefulSet');w=next(o for o in objects if o['kind']==k);container=w['spec']['template']['spec']['containers'][0]
+   self.assertTrue(w['spec']['volumeClaimTemplates'])
+   if broker=='kafka':
+    env={v['name']:v.get('value') for v in container['env']};self.assertIn('kafka.dev.svc.cluster.local',env['KAFKA_ADVERTISED_LISTENERS']);self.assertEqual(env['KAFKA_PROCESS_ROLES'],'broker,controller')
+   else:
+    ingress=next(o for o in objects if o['kind']=='Ingress');self.assertEqual(ingress['spec']['rules'][0]['http']['paths'][0]['backend']['service']['port']['number'],15672)
+    self.assertEqual(container['env'][1]['valueFrom']['secretKeyRef']['name'],'rabbitmq-auth')
+   with self.assertRaises(ValueError):lab.validate({'name':'mq','type':broker,'replicas':2})

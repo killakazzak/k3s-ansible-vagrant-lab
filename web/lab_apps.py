@@ -3,7 +3,8 @@ import json, os, re, secrets, subprocess, tempfile, time
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER = 'k3s-lab-catalog'
-CATALOG = {'nginx': {'image':'nginx:1.30.4-alpine','port':80}, 'postgres':{'image':'postgres:17-alpine','port':5432}, 'redis':{'image':'redis:7.4-alpine','port':6379}, 'custom':{'image':'','port':8080}}
+CATALOG = {'nginx': {'image':'nginx:1.30.4-alpine','port':80}, 'postgres':{'image':'postgres:17-alpine','port':5432}, 'redis':{'image':'redis:7.4-alpine','port':6379}, 'kafka':{'image':'apache/kafka:4.0.0','port':9092}, 'rabbitmq':{'image':'rabbitmq:4.1-management','port':5672}, 'custom':{'image':'','port':8080}}
+STATEFUL = ('postgres','redis','kafka','rabbitmq')
 PROTECTED = {'kube-system','kube-public','kube-node-lease','cattle-system','cert-manager','default'}
 
 def dns(value, label='имя'):
@@ -32,13 +33,16 @@ def validate(config):
     if ':' not in image.rsplit('/',1)[-1] or image.endswith(':latest'):raise ValueError('Укажите версию образа вместо latest')
     if kind=='postgres' and not re.fullmatch(r'(?:docker.io/library/)?postgres:17(?:[.\w-]*)',image):raise ValueError('Каталог PostgreSQL поддерживает ветку 17. Смена major требует отдельной миграции данных.')
     if kind=='redis' and not re.fullmatch(r'(?:docker.io/library/)?redis:7(?:[.\w-]*)',image):raise ValueError('Каталог Redis поддерживает ветку 7.')
+    if kind=='kafka' and not re.fullmatch(r'(?:docker.io/)?apache/kafka:4\.0\.\d+',image):raise ValueError('Kafka: используйте apache/kafka:4.0.x')
+    if kind=='rabbitmq' and not re.fullmatch(r'(?:docker.io/library/)?rabbitmq:4\.1(?:\.\d+)?-management',image):raise ValueError('RabbitMQ: используйте rabbitmq:4.1-management')
+    if kind in ('kafka','rabbitmq') and int(config.get('port',CATALOG[kind]['port']))!=CATALOG[kind]['port']:raise ValueError('Для брокеров используется стандартный порт')
     host=config.get('host','').strip()
     if host and not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?',host):raise ValueError('URL: укажите hostname без http:// и пути')
     if host and ('..' in host or len(host)>253 or any(len(part)>63 for part in host.split('.'))):raise ValueError('Некорректный hostname')
-    if kind in ('postgres','redis') and host:raise ValueError('HTTP Ingress не применяется к PostgreSQL/Redis')
+    if kind in ('postgres','redis','kafka') and host:raise ValueError('HTTP Ingress не применяется к PostgreSQL/Redis/Kafka')
     return dict(type=kind,name=dns(config.get('name',''),'имя приложения'),namespace=namespace(config.get('namespace','dev'),True),image=image,
-                replicas=number(config.get('replicas',1),1,1 if kind in ('postgres','redis') else 10,'реплики'),
-                cpu=number(config.get('cpu',100),25,8000,'CPU, millicores'),memory=number(config.get('memory',256),32,16384,'RAM, MiB'),
+                replicas=number(config.get('replicas',1),1,1 if kind in STATEFUL else 10,'реплики'),
+                cpu=number(config.get('cpu',100),25,8000,'CPU, millicores'),memory=number(config.get('memory',1024 if kind=='kafka' else 512 if kind=='rabbitmq' else 256),768 if kind=='kafka' else 256 if kind=='rabbitmq' else 32,16384,'RAM, MiB'),
                 storage=number(config.get('storage',2),1,100,'диск, GiB'),port=number(config.get('port',CATALOG[kind]['port']),1,65535,'порт'),host=host)
 
 def templates():
@@ -116,7 +120,7 @@ class Apps:
         ip=next(a['address'] for a in master['status']['addresses'] if a['type']=='InternalIP')
         return config['host']+'.'+ip+'.sslip.io'
     def plan(self,config):
-        c=validate(config);ns=c['namespace'];name=c['name'];kind='StatefulSet' if c['type'] in ('postgres','redis') else 'Deployment'
+        c=validate(config);ns=c['namespace'];name=c['name'];kind='StatefulSet' if c['type'] in STATEFUL else 'Deployment'
         labels={'app.kubernetes.io/managed-by':MANAGER,'app.kubernetes.io/name':name,'lab.k3s/type':c['type']}
         selector={'lab.k3s/app':name}
         def resource(api,kind,n=name):return dict(apiVersion=api,kind=kind,metadata=dict(name=n,namespace=ns,labels=labels.copy()))
@@ -127,17 +131,25 @@ class Apps:
         if kind=='StatefulSet':
             workload['spec']['serviceName']=name+'-headless'
             workload['spec']['volumeClaimTemplates']=[dict(metadata={'name':'data'},spec={'accessModes':['ReadWriteOnce'],'resources':{'requests':{'storage':str(c['storage'])+'Gi'}}})]
-            container['volumeMounts']=[dict(name='data',mountPath='/var/lib/postgresql/data' if c['type']=='postgres' else '/data')]
+            container['volumeMounts']=[dict(name='data',mountPath={'postgres':'/var/lib/postgresql/data','redis':'/data','kafka':'/var/lib/kafka/data','rabbitmq':'/var/lib/rabbitmq'}[c['type']])]
             headless=resource('v1','Service',name+'-headless');headless['spec']=dict(clusterIP='None',selector=selector,ports=[dict(port=c['port'],targetPort='app')]);objects.append(headless)
         if c['type']=='postgres':
             container['env']=[dict(name='POSTGRES_PASSWORD',valueFrom={'secretKeyRef':{'name':name+'-auth','key':'password'}}),dict(name='POSTGRES_USER',value='app'),dict(name='POSTGRES_DB',value='app'),dict(name='PGDATA',value='/var/lib/postgresql/data/pgdata')]
         if c['type']=='redis':container['args']=['redis-server','--appendonly','yes']
+        if c['type']=='kafka':
+            pod['securityContext']={'fsGroup':1000}
+            values={'KAFKA_NODE_ID':'1','KAFKA_PROCESS_ROLES':'broker,controller','KAFKA_LISTENERS':'PLAINTEXT://:9092,CONTROLLER://:9093','KAFKA_ADVERTISED_LISTENERS':'PLAINTEXT://'+name+'.'+ns+'.svc.cluster.local:9092','KAFKA_LISTENER_SECURITY_PROTOCOL_MAP':'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT','KAFKA_CONTROLLER_LISTENER_NAMES':'CONTROLLER','KAFKA_CONTROLLER_QUORUM_VOTERS':'1@localhost:9093','KAFKA_INTER_BROKER_LISTENER_NAME':'PLAINTEXT','KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR':'1','KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR':'1','KAFKA_TRANSACTION_STATE_LOG_MIN_ISR':'1','KAFKA_LOG_DIRS':'/var/lib/kafka/data/logs','KAFKA_HEAP_OPTS':'-Xms256m -Xmx512m','CLUSTER_ID':'MkU3OEVBNTcwNTJENDM2Qk'}
+            container['env']=[dict(name=k,value=v) for k,v in values.items()]
+        if c['type']=='rabbitmq':
+            container['env']=[dict(name='RABBITMQ_DEFAULT_USER',value='app'),dict(name='RABBITMQ_DEFAULT_PASS',valueFrom={'secretKeyRef':{'name':name+'-auth','key':'password'}})]
+            container['ports'].append(dict(name='management',containerPort=15672))
         objects.append(workload)
         service=resource('v1','Service');service['spec']=dict(type='ClusterIP',selector=selector,ports=[dict(name='app',port=c['port'],targetPort='app')]);objects.append(service)
+        if c['type']=='rabbitmq':service['spec']['ports'].append(dict(name='management',port=15672,targetPort='management'))
         host=self.host(c)
         if host:
             ingress=resource('networking.k8s.io/v1','Ingress');ingress['metadata']['annotations']={'traefik.ingress.kubernetes.io/router.entrypoints':'web'}
-            ingress['spec']=dict(ingressClassName='traefik',rules=[{'host':host,'http':{'paths':[{'path':'/','pathType':'Prefix','backend':{'service':{'name':name,'port':{'number':c['port']}}}}]}}]);objects.append(ingress)
+            ingress['spec']=dict(ingressClassName='traefik',rules=[{'host':host,'http':{'paths':[{'path':'/','pathType':'Prefix','backend':{'service':{'name':name,'port':{'number':15672 if c['type']=='rabbitmq' else c['port']}}}}]}}]);objects.append(ingress)
         return c,kind,objects,host
     def preflight(self,config):
         c,kind,objects,host=self.plan(config)
@@ -147,19 +159,20 @@ class Apps:
         for other in ('Deployment','StatefulSet'):
             if self.find(other,c['namespace'],c['name']):raise ValueError('Приложение с таким именем уже существует')
         if host and any(r.get('host')==host for i in self.get('ingress')['items'] for r in i.get('spec',{}).get('rules',[])):raise ValueError('Этот hostname уже используется Ingress')
-        if c['type']=='postgres' and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Secret для базы уже существует; используйте другое имя')
+        if c['type'] in ('postgres','rabbitmq') and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Secret для базы уже существует; используйте другое имя')
         if kind=='StatefulSet' and self.find('pvc',c['namespace'],'data-'+c['name']+'-0'):raise ValueError('Сохранённый PVC уже существует. Используйте другое имя или восстановите приложение вручную.')
         return c,kind,objects,host
     def deploy(self,config,prepared=None):
         c,kind,objects,host=prepared or self.preflight(config);ns=c['namespace'];name=c['name']
         print('TASK [Создать '+ns+'/'+name+']',flush=True)
         if not self.find('namespace',None,ns):self.apply([{'apiVersion':'v1','kind':'Namespace','metadata':{'name':ns}}])
-        if c['type']=='postgres':
+        if c['type'] in ('postgres','rabbitmq'):
             self.apply([dict(apiVersion='v1',kind='Secret',metadata=dict(name=name+'-auth',namespace=ns),type='Opaque',stringData={'password':secrets.token_urlsafe(32)})])
         self.apply(objects)
         print(self.kubectl(['rollout','status',kind.lower()+'/'+name,'-n',ns,'--timeout=240s'],timeout=250),flush=True)
         self.check(c,kind,host)
         print('Готово: '+(host and 'http://'+host+'/' or name+'.'+ns+'.svc.cluster.local:'+str(c['port'])),flush=True)
+        if c['type']=='rabbitmq':print('RabbitMQ: пользователь app, пароль в Secret '+ns+'/'+name+'-auth (ключ password).',flush=True)
         if c['type']=='postgres':print('PostgreSQL: пользователь app, база app, пароль в Secret '+ns+'/'+name+'-auth (ключ password).',flush=True)
     def check(self,c,kind,host=''):
         ns=c['namespace'];name=c['name'];target=kind.lower()+'/'+name
@@ -170,7 +183,7 @@ class Apps:
         script='import socket,sys; h,p=sys.argv[1],int(sys.argv[2]); socket.getaddrinfo(h,p); c=socket.create_connection((h,p),10); c.close(); print("DNS/TCP OK")'
         if c['type']=='nginx' or host:
             script+='; import urllib.request; r=urllib.request.urlopen("http://"+h+":"+str(p)+"/",timeout=10); print("HTTP",r.status); r.close()'
-        command=['python','-c',script,dnsname,str(c['port'])]
+        command=['python','-c',script,dnsname,str(15672 if c['type']=='rabbitmq' and host else c['port'])]
         manifest={'apiVersion':'v1','kind':'Pod','metadata':{'name':probe,'namespace':ns},'spec':{'restartPolicy':'Never','activeDeadlineSeconds':90,'containers':[{'name':'check','image':'python:3.13-alpine','command':command,'resources':{'requests':{'cpu':'10m','memory':'16Mi'},'limits':{'cpu':'100m','memory':'64Mi'}}}]}}
         try:
             self.apply([manifest]);end=time.monotonic()+110
@@ -190,6 +203,12 @@ class Apps:
             result=self.kubectl(['exec','-n',ns,target,'--','redis-cli','-h',dnsname,'PING'])
             if 'PONG' not in result:raise ValueError('Redis PING не прошёл')
             print('Redis PING через Service: OK',flush=True)
+        if c['type']=='kafka':
+            self.kubectl(['exec','-n',ns,target,'--','/opt/kafka/bin/kafka-topics.sh','--bootstrap-server',dnsname+':9092','--list'],timeout=60)
+            print('Kafka broker metadata: OK',flush=True)
+        elif c['type']=='rabbitmq':
+            self.kubectl(['exec','-n',ns,target,'--','rabbitmq-diagnostics','-q','check_running'],timeout=60)
+            print('RabbitMQ check_running: OK',flush=True)
         if host:
             subprocess.run(['curl','--noproxy','*','--fail','--silent','--show-error','--max-time','10','--retry','5','--retry-delay','2','--retry-all-errors','--output',os.devnull,'http://'+host+'/'],check=True,timeout=90)
             print('URL http://'+host+'/: OK',flush=True)
@@ -203,11 +222,11 @@ class Apps:
             image=data.get('image','');container=data.get('container')
             if container not in [c['name'] for c in containers]:raise ValueError('Выберите контейнер')
             validate(dict(type=ctype,image=image,name=name,namespace=ns))
-            replicas=number(data.get('replicas',1),0,1 if ctype in ('postgres','redis') else 10,'реплики')
+            replicas=number(data.get('replicas',1),0,1 if ctype in STATEFUL else 10,'реплики')
             patch={'spec':{'replicas':replicas,'template':{'spec':{'containers':[{'name':container,'image':image}]}}}}
             self.kubectl(['patch',target,'-n',ns,'--type=strategic','-p',json.dumps(patch)])
         elif action=='app_rollback':
-            if ctype in ('postgres','redis'):raise ValueError('Откат образа базы может быть несовместим с данными. Восстановление базы выполняйте отдельно.')
+            if ctype in STATEFUL:raise ValueError('Откат образа базы может быть несовместим с данными. Восстановление базы выполняйте отдельно.')
             self.kubectl(['rollout','undo',target,'-n',ns])
             if kind=='StatefulSet':
                 restored=self.get(kind,ns,name)
