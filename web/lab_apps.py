@@ -118,6 +118,14 @@ class Apps:
         for app in out:
             app['urls']=[{'title':i['metadata']['name'],'url':'http://'+r['host']+'/'} for i in routes if i['metadata'].get('namespace')==app['namespace'] for r in i.get('spec',{}).get('rules',[]) if r.get('host') and any(p.get('backend',{}).get('service',{}).get('name') in (app['name'],app['name']+'-ui') for p in r.get('http',{}).get('paths',[]))]
         return out
+    def secret_info(self):
+        result=[]
+        for obj in self.get('secrets')['items']:
+            m=obj['metadata'];ns=m.get('namespace','default')
+            if ns in PROTECTED or ns.startswith(('kube-','cattle-')):continue
+            keys=sorted(obj.get('data',{}))
+            result.append(dict(name=m['name'],namespace=ns,type=obj.get('type','Opaque'),keys=keys,hasPassword=bool(obj.get('data',{}).get('password'))))
+        return result
     def pvcs(self):
         pods=self.get('pods')['items'];result=[]
         volumes={v['metadata']['name']:v for v in self.get('pv')['items']}

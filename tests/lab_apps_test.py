@@ -129,3 +129,7 @@ class LabTests(unittest.TestCase):
   location=lab.storage_location(pv,nodes);self.assertEqual(location['nodes'][0]['name'],'worker1');self.assertEqual(location['path'],'/var/lib/rancher/k3s/storage/claim')
   self.assertEqual(lab.storage_location({'spec':{'hostPath':{'path':'/data'}}},nodes)['nodes'],[])
   self.assertEqual(lab.storage_location({'spec':{'nfs':{'server':'nas','path':'/export'}}},nodes)['server'],'nas')
+ def test_secret_info_never_returns_values(self):
+  app=lab.Apps('/tmp')
+  with patch.object(app,'get',return_value={'items':[{'metadata':{'name':'db-auth','namespace':'dev'},'data':{'password':'sensitive-base64'}}]}):
+   info=app.secret_info();self.assertTrue(info[0]['hasPassword']);self.assertEqual(info[0]['keys'],['password']);self.assertNotIn('sensitive-base64',str(info))

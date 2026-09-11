@@ -455,6 +455,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, visible_clusters())
             if path in ('/api/credentials/rancher', '/api/credentials/traefik'):
                 return self.reply(200, credentials(path.rsplit('/', 1)[1]))
+            if path == '/api/secret-info':
+                return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).secret_info())
             if path == '/api/pvcs':
                 return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).pvcs())
             if path == '/api/apps':
