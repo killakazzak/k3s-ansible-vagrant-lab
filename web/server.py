@@ -576,6 +576,20 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/pod':
                 return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).diagnostics(data))
             if self.path == '/api/terminal':
+                data.pop('_command',None)
+                if data.get('operation')=='open' and data.get('pod'):
+                    ns=lab_apps.namespace(data.get('namespace'));name=lab_apps.resource_name(data['pod'])
+                    pod=lab_apps.Apps(active_root(),cluster_env(active_root())).get('pod',ns,name)
+                    container=data.get('container');spec=pod['spec']
+                    if container not in [c['name'] for c in spec.get('containers',[])+spec.get('initContainers',[])+spec.get('ephemeralContainers',[])]:raise ValueError('Контейнер не найден в Pod')
+                    mode=data.get('mode','shell')
+                    if mode=='logs':args=['logs','-f','--tail=200','--timestamps','-n',ns,name,'-c',container]
+                    elif mode=='shell':
+                        shell=data.get('shell','sh')
+                        if shell not in ('sh','bash'):raise ValueError('Выберите sh или bash')
+                        args=['exec','-it','-n',ns,name,'-c',container,'--',shell]
+                    else:raise ValueError('Неизвестный режим дебага')
+                    data['_command']=[str(active_root()/'kubectl.sh')]+args
                 env = cluster_env(active_root())
                 env['PATH'] = str(ROOT / '.tools') + ':' + env['PATH']
                 return self.reply(200, terminal_sessions.handle(data, active_root(), env))

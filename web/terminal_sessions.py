@@ -1,10 +1,10 @@
 """Private PTY sessions for the loopback console."""
-import atexit, base64, fcntl, os, pty, secrets, signal, struct, subprocess, sys, tempfile, termios, threading, time
+import json, atexit, base64, fcntl, os, pty, secrets, signal, struct, subprocess, sys, tempfile, termios, threading, time
 from pathlib import Path
 SESSIONS = {}
 LOCK = threading.Lock()
 class Session:
-    def __init__(self, root, env):
+    def __init__(self, root, env, command=None):
         self.root = root
         self.condition = threading.Condition()
         self.buffer = bytearray()
@@ -28,6 +28,8 @@ fi
 print 'Tab — дополнение · ↑/↓ — история · Ctrl+C — остановить'
 ''')
         env = dict(env, ZDOTDIR=self.settings.name, TERM='xterm-256color', KUBECONFIG=str(root/'kubeconfig'), LAB_CLUSTER=root.name, PATH=str(root/'.tools')+':'+env['PATH'])
+        if command:env["LAB_PTY_COMMAND"]=json.dumps(command)
+        else:env.pop("LAB_PTY_COMMAND",None)
         self.master, slave = pty.openpty()
         self.resize(100,24)
         try:
@@ -85,7 +87,7 @@ def handle(data,root,env):
             if len(SESSIONS)>=8: raise ValueError('Закройте неиспользуемые терминалы (максимум 8).')
             file=root/'kubeconfig'
             if file.is_symlink() or not file.is_file() or not file.stat().st_size: raise ValueError('Подключение пока не готово. Дождитесь настройки кластера.')
-            session=Session(root,env)
+            session=Session(root,env,data.get("_command"))
             key=secrets.token_hex(24)
             SESSIONS[key]=session
             return {'id':key}
