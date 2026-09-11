@@ -173,3 +173,12 @@ class TimingTests(unittest.TestCase):
             self.assertEqual(app.timing_samples(other), [])
             (Path(directory) / '.cache/durations.json').write_text('broken')
             self.assertEqual(app.timing_samples(key), [])
+
+class VisibleClusterTests(unittest.TestCase):
+    def test_empty_profiles_hidden_but_pending_creation_visible(self):
+        original = app.active_root()
+        with patch.object(app, 'cluster_names', return_value=['default','k8s-cluster2']), patch.object(app, 'cluster_root', side_effect=lambda n: n), patch.object(app, 'config', side_effect=lambda: {'nodes': [] if app.active_root() == 'default' else [{'name':'master'}]}):
+            self.assertEqual(app.visible_clusters(), ['k8s-cluster2'])
+        self.assertEqual(app.active_root(), original)
+        with patch.object(app, 'cluster_names', return_value=['default']), patch.object(app, 'config', return_value={'nodes':[]}):
+            self.assertEqual(app.visible_clusters(), [])

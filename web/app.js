@@ -5,6 +5,7 @@ if (fragment.has('token')) { sessionStorage.setItem('lab-token', fragment.get('t
 const token = sessionStorage.getItem('lab-token') || '';
 let selectedCluster = sessionStorage.getItem('lab-cluster') || 'default';
 let state = null, currentAction = null, busy = false, lastJob = null;
+let clusterCount = 0, refreshPromise = null;
 async function api(path, data) {
   const response = await fetch('/api/' + path, {method: data ? 'POST' : 'GET', headers: {'X-Lab-Token':token,'X-Lab-Cluster':selectedCluster,'Content-Type':'application/json'}, ...(data ? {body:JSON.stringify(data)} : {})});
   const result = await response.json(); if (!response.ok) throw Error(result.error); return result;
@@ -79,8 +80,15 @@ function render() {
   setBusy(busy);
   renderProgress();
 }
-function setBusy(value){busy=value;$('cluster-select').disabled=value;$('new-cluster').disabled=value;$('create-cluster').disabled=value;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=value || (!!state && !state.nodes.length && !['create'].includes(b.dataset.action)))}
-async function refresh(){try{$('refresh').disabled=true;state=await api('status');render();error(state.error||'')}catch(e){error(e.message)}finally{$('refresh').disabled=false}}
+function setBusy(value){busy=value;$('cluster-select').disabled=value || clusterCount===0;$('new-cluster').disabled=value;$('create-cluster').disabled=value;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=value || (!!state && !state.nodes.length && !['create'].includes(b.dataset.action)))}
+async function refresh(){
+  while(refreshPromise){await refreshPromise;}
+  const cluster=selectedCluster;
+  const request=(async()=>{try{$('refresh').disabled=true;const result=await api('status');if(cluster!==selectedCluster)return;state=result;render();error(state.error||'')}catch(e){if(cluster===selectedCluster)error(e.message)}finally{$('refresh').disabled=false}})();
+  refreshPromise=request;
+  await request;
+  if(refreshPromise===request)refreshPromise=null;
+}
 async function loadLinks(){if(state && !state.nodes.length){for(const name of ['rancher','traefik']){const a=$(name+'-link');a.removeAttribute('href');a.textContent='Появится после создания кластера'}return;}try{const links=await api('links');for(const name of ['rancher','traefik']){const a=$(name+'-link');if(state && !state[name]){a.textContent='Отключён в конфигурации';a.removeAttribute('href');continue}const url=new URL(links[name]);if(url.protocol!=='https:')throw Error('Некорректная ссылка');a.href=url.href;a.textContent=url.hostname+' ↗'}}catch(e){for(const name of ['rancher','traefik'])$(name+'-link').textContent='Адрес недоступен';error(e.message)}}
 const definitions={create:['Применить выбранный','Эта форма изменяет выбранный кластер. Для второго кластера нажмите «Новый кластер». Для существующих VM меняйте состав через добавление и удаление отдельных узлов.'],add_master:['Добавить master','Для устойчивости etcd нужны 3 master. Первый master остаётся адресом API.'],add_worker:['Добавить worker','Новая виртуальная машина присоединится к текущему кластеру.'],remove_master:['Удалить master','Будут выполнены snapshot etcd, drain и исключение узла из etcd. Данные VM будут удалены.'],remove_worker:['Удалить worker','Будут выполнены drain и удаление VM. Данные диска и emptyDir будут потеряны; локальные PV не переносятся автоматически.'],resources:['Ресурсы узла','Существующая VM будет перезагружена. Изменение master временно прервёт доступ к API.'],version:['Изменить версию k3s','Это пересоздание лаборатории: все VM и их данные будут удалены. Это не обновление с сохранением данных.'],destroy:['Удалить кластер','Все виртуальные машины этого проекта и данные их дисков будут удалены. Кэш загрузок сохранится.'],verify:['Проверить кластер','Проверим DNS, межузловую сеть и HTTP через Traefik. Тестовые ресурсы будут удалены после проверки.']};
 function field(name,label,value='',type='text',min,max){const l=element('label',label);l.htmlFor='field-'+name;const input=element('input');input.id=l.htmlFor;input.name=name;input.type=type;input.value=value;input.required=true;if(min!==undefined)input.min=min;if(max!==undefined)input.max=max;$('fields').append(l,input)}
@@ -118,16 +126,20 @@ document.addEventListener('click', e => {
 });
 $('action-form').addEventListener('submit',async e=>{e.preventDefault();if(!currentAction)return;const params=Object.fromEntries(new FormData(e.target));$('submit').disabled=true;try{if(currentAction==='new_cluster'){const result=await api('clusters',params);selectedCluster=result.name;sessionStorage.setItem('lab-cluster',selectedCluster);$('modal').close();await loadClusters();await refresh();await loadLinks();openAction('create');return;}await api('action',{action:currentAction,params,confirmed:true,confirmation:params.confirmation});$('modal').close();setBusy(true);$('operations').scrollIntoView({behavior:'smooth'});await poll()}catch(e){$('form-error').textContent=e.message;$('form-error').hidden=false}finally{$('submit').disabled=false}});
 for(const id of ['cancel','close'])$(id).onclick=()=>$('modal').close();
-$('refresh').onclick=async()=>{await refresh();await loadLinks()};
+$('refresh').onclick=async()=>{await loadClusters();await refresh();await loadLinks()};
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav').forEach(n=>n.classList.remove('active'));b.classList.add('active');if(b.dataset.view==='overview')window.scrollTo({top:0,behavior:'smooth'});else $(b.dataset.view).scrollIntoView({behavior:'smooth',block:'start'})});
 let polling=false;
-async function poll(){if(polling)return;polling=true;try{const job=await api('job');activeJob=job;renderProgress();if(job){deployingCluster=job.state==='running' && ['create','version','add_master','add_worker'].includes(job.action)?(job.cluster||'default'):null;setBusy(job.state==='running');$('job-status').textContent='['+(job.cluster||'default')+'] '+(job.state==='running'?'Выполняется…':job.state==='success'?'Завершено':'Ошибка — проверьте журнал');const log=$('log');const bottom=log.scrollHeight-log.scrollTop-log.clientHeight<50;log.textContent=job.log.replace(/\x1b\[[0-9;]*m/g,'')||'Запускаем операцию…';if(bottom)log.scrollTop=log.scrollHeight;if(lastJob!==job.id+job.state){lastJob=job.id+job.state;await refresh();if(job.state!=='running'){await loadLinks()}}}}catch(e){error(e.message)}finally{polling=false}}
+async function poll(){if(polling)return;polling=true;try{const job=await api('job');activeJob=job;renderProgress();if(job){deployingCluster=job.state==='running' && ['create','version','add_master','add_worker'].includes(job.action)?(job.cluster||'default'):null;setBusy(job.state==='running');$('job-status').textContent='['+(job.cluster||'default')+'] '+(job.state==='running'?'Выполняется…':job.state==='success'?'Завершено':'Ошибка — проверьте журнал');const log=$('log');const bottom=log.scrollHeight-log.scrollTop-log.clientHeight<50;log.textContent=job.log.replace(/\x1b\[[0-9;]*m/g,'')||'Запускаем операцию…';if(bottom)log.scrollTop=log.scrollHeight;if(lastJob!==job.id+job.state){lastJob=job.id+job.state;if(job.state!=='running')await loadClusters();await refresh();if(job.state!=='running'){await loadLinks()}}}}catch(e){error(e.message)}finally{polling=false}}
 async function loadClusters(){
   const names=await api('clusters');
-  if(!names.includes(selectedCluster))selectedCluster='default';
+  clusterCount=names.length;
+  if(!names.includes(selectedCluster))selectedCluster=names[0]||'default';
+  sessionStorage.setItem('lab-cluster',selectedCluster);
   $('cluster-select').replaceChildren();
+  if(!names.length){const empty=element('option','Нет кластеров — создайте новый');empty.value='default';$('cluster-select').append(empty)}
   for(const name of names){const option=element('option',name==='default'?'k8s-cluster1 (основной)':name);option.value=name;$('cluster-select').append(option)}
   $('cluster-select').value=selectedCluster;
+  $('cluster-select').disabled=busy || !names.length;
 }
 $('cluster-select').onchange=async()=>{selectedCluster=$('cluster-select').value;sessionStorage.setItem('lab-cluster',selectedCluster);await refresh();await loadLinks()};
 $('create-cluster').onclick=()=>{ $('new-cluster').click(); };
@@ -137,6 +149,18 @@ $('new-cluster').onclick=()=>{
   field('name','Имя кластера — автоматически, если оставить пустым');$('field-name').required=false;$('field-name').placeholder='k8s-cluster2, k8s-cluster3, …';field('network','Отдельная подсеть /24, например 192.168.59.0/24');
   $('submit').hidden=false;$('submit').textContent='Далее';$('modal').showModal();
 };
+let autoRefreshing=false;
+async function autoRefresh(){
+  if(autoRefreshing || document.hidden || $('modal').open || refreshPromise)return;
+  autoRefreshing=true;
+  try{
+    const previous=selectedCluster;
+    await loadClusters();await refresh();
+    if(previous!==selectedCluster || (state && !state.nodes.length))await loadLinks();
+  }catch(e){error(e.message)}finally{autoRefreshing=false}
+}
+setInterval(autoRefresh,15000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)autoRefresh()});
 setInterval(renderProgress,1000);
 (async()=>{try{await loadClusters()}catch(e){error(e.message)}await refresh();await loadLinks();await poll();setInterval(poll,2000)})();
 

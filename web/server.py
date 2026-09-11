@@ -46,6 +46,20 @@ def cluster_names():
 def cluster_env(root):
     return dict(ENV, VAGRANT_CWD=str(root), VAGRANT_DOTFILE_PATH=str(root / '.vagrant'))
 
+def visible_clusters():
+    previous = active_root()
+    visible = []
+    try:
+        for name in cluster_names():
+            CONTEXT.root = cluster_root(name)
+            try:
+                if config()['nodes']: visible.append(name)
+            except Exception:
+                visible.append(name)  # Keep broken profiles available for diagnosis.
+    finally:
+        CONTEXT.root = previous
+    return visible
+
 def next_cluster_name():
     used = set(cluster_names())
     index = 2  # The default profile is cluster1.
@@ -321,7 +335,7 @@ class Handler(BaseHTTPRequestHandler):
                 filename = ('k8s-cluster1' if name == 'default' else name) + '-kubeconfig.yaml'
                 return self.reply(200, content, 'application/yaml', download=filename)
             if path == '/api/clusters':
-                return self.reply(200, cluster_names())
+                return self.reply(200, visible_clusters())
             if path in ('/api/credentials/rancher', '/api/credentials/traefik'):
                 return self.reply(200, credentials(path.rsplit('/', 1)[1]))
             if path == '/api/status':
