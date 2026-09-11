@@ -48,6 +48,26 @@
                     password: {{ dashboard_password.stdout | to_json }}
                     users: {{ (traefik_dashboard_username + ':' + dashboard_hash.stdout) | to_json }}
               no_log: true
+        - name: Read stored credentials for middleware
+          ansible.builtin.command: k3s kubectl -n kube-system get secret traefik-dashboard-auth -o json
+          register: dashboard_credentials
+          changed_when: false
+          no_log: true
+        - name: Create single-field BasicAuth secret for Traefik
+          ansible.builtin.command: k3s kubectl apply -f -
+          args:
+            stdin: |
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: traefik-dashboard-users
+                namespace: kube-system
+              type: Opaque
+              data:
+                users: {{ (dashboard_credentials.stdout | from_json).data.users | to_json }}
+          register: dashboard_users
+          changed_when: "'unchanged' not in dashboard_users.stdout"
+          no_log: true
         - name: Apply HTTPS route with BasicAuth
           ansible.builtin.command: k3s kubectl apply -f -
           args:
@@ -59,7 +79,7 @@
                 namespace: kube-system
               spec:
                 basicAuth:
-                  secret: traefik-dashboard-auth
+                  secret: traefik-dashboard-users
               ---
               apiVersion: traefik.io/v1alpha1
               kind: IngressRoute
