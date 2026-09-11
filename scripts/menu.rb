@@ -273,7 +273,7 @@ class ClusterMenu
   def start
     loop do
       show
-      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n0. Выход"
+      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Веб-интерфейс управления\n0. Выход"
       begin
         case ask('Выбери номер')
         when '1' then create_cluster
@@ -290,6 +290,7 @@ class ClusterMenu
         when '9' then add_master
         when '10' then remove_master
         when '11' then run('ansible-playbook', 'ansible/access.yml')
+        when '12' then run('./cluster.sh', 'web')
         when '0' then break
         else puts 'Выбери номер из меню.'
         end

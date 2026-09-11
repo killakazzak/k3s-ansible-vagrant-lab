@@ -1,0 +1,53 @@
+'use strict';
+const $ = id => document.getElementById(id);
+const fragment = new URLSearchParams(location.hash.slice(1));
+if (fragment.has('token')) { sessionStorage.setItem('lab-token', fragment.get('token')); history.replaceState(null, '', '/'); }
+const token = sessionStorage.getItem('lab-token') || '';
+let state = null, currentAction = null, busy = false, lastJob = null;
+async function api(path, data) {
+  const response = await fetch('/api/' + path, {method: data ? 'POST' : 'GET', headers: {'X-Lab-Token':token,'Content-Type':'application/json'}, ...(data ? {body:JSON.stringify(data)} : {})});
+  const result = await response.json(); if (!response.ok) throw Error(result.error); return result;
+}
+function error(message) { $('error').textContent = message; $('error').hidden = !message; }
+function element(tag, text, cls) { const e=document.createElement(tag); if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e; }
+function render() {
+  const ready=state.nodes.filter(n=>n.state==='Ready').length;
+  $('health').textContent=state.reachable?'На связи':'Недоступен';
+  $('health-detail').textContent=state.reachable?'Kubernetes API отвечает':'Нет подключения к API';
+  $('node-count').textContent=ready+' / '+state.nodes.length;
+  $('roles').textContent=state.nodes.filter(n=>n.role==='server').length+' master · '+state.nodes.filter(n=>n.role==='workers').length+' workers';
+  $('memory').textContent=(state.nodes.reduce((s,n)=>s+n.ram,0)/1024).toFixed(0)+' ГБ';
+  $('version').textContent=state.version; $('provider').textContent=state.provider+' · ARM64';
+  $('node-list').replaceChildren();
+  for (const node of state.nodes) {
+    const tr=element('tr'),name=element('td');name.append(element('span',node.name,'node-name'),element('span',node.role==='server'?'CONTROL PLANE':'WORKER','role'));tr.append(name);
+    const status=element('td');status.append(element('span',node.state,'badge '+node.state));tr.append(status,element('td',node.ip),element('td',node.cpu+' CPU / '+node.ram/1024+' ГБ'));
+    const actions=element('td'),wrap=element('div',undefined,'nodebuttons');
+    const edit=element('button','Настроить','textbutton');edit.dataset.action='resources';edit.dataset.node=node.name;wrap.append(edit);
+    const protectedNode=node.role==='server'?state.nodes.find(n=>n.role==='server')===node:state.nodes.filter(n=>n.role==='workers').length<=1;
+    if(!protectedNode){const remove=element('button','Удалить','textbutton remove');remove.dataset.action=node.role==='server'?'remove_master':'remove_worker';remove.dataset.node=node.name;wrap.append(remove)}
+    actions.append(wrap);tr.append(actions);$('node-list').append(tr);
+  }
+  setBusy(busy);
+}
+function setBusy(value){busy=value;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=value)}
+async function refresh(){try{$('refresh').disabled=true;state=await api('status');render();error(state.error||'')}catch(e){error(e.message)}finally{$('refresh').disabled=false}}
+async function loadLinks(){try{const links=await api('links');for(const name of ['rancher','traefik']){const a=$(name+'-link');if(state && !state[name]){a.textContent='Отключён в конфигурации';a.removeAttribute('href');continue}const url=new URL(links[name]);if(url.protocol!=='https:')throw Error('Некорректная ссылка');a.href=url.href;a.textContent=url.hostname+' ↗'}}catch(e){for(const name of ['rancher','traefik'])$(name+'-link').textContent='Адрес недоступен';error(e.message)}}
+const definitions={create:['Создать / применить','Задайте состав кластера. Для существующих VM меняйте состав через добавление и удаление отдельных узлов.'],add_master:['Добавить master','Для устойчивости etcd нужны 3 master. Первый master остаётся адресом API.'],add_worker:['Добавить worker','Новая виртуальная машина присоединится к текущему кластеру.'],remove_master:['Удалить master','Будут выполнены snapshot etcd, drain и исключение узла из etcd. Данные VM будут удалены.'],remove_worker:['Удалить worker','Будут выполнены drain и удаление VM. Данные диска и emptyDir будут потеряны; локальные PV не переносятся автоматически.'],resources:['Ресурсы узла','Существующая VM будет перезагружена. Изменение master временно прервёт доступ к API.'],version:['Изменить версию k3s','Это пересоздание лаборатории: все VM и их данные будут удалены. Это не обновление с сохранением данных.'],destroy:['Удалить кластер','Все виртуальные машины этого проекта и данные их дисков будут удалены. Кэш загрузок сохранится.'],verify:['Проверить кластер','Проверим DNS, межузловую сеть и HTTP через Traefik. Тестовые ресурсы будут удалены после проверки.']};
+function field(name,label,value='',type='text',min,max){const l=element('label',label);l.htmlFor='field-'+name;const input=element('input');input.id=l.htmlFor;input.name=name;input.type=type;input.value=value;input.required=true;if(min!==undefined)input.min=min;if(max!==undefined)input.max=max;$('fields').append(l,input)}
+function openAction(action,nodeName){if(!state)return;currentAction=action;$('fields').replaceChildren();$('form-error').hidden=true;$('submit').hidden=false;$('submit').textContent='Подтвердить';$('modal-title').textContent=definitions[action][0];$('modal-description').textContent=definitions[action][1];
+ if(nodeName){const input=element('input');input.type='hidden';input.name='node';input.value=nodeName;$('fields').append(input);$('modal-description').textContent=nodeName+'. '+definitions[action][1]}
+ if(action==='create'){field('masters','Количество master',state.nodes.filter(n=>n.role==='server').length,'number',1,7);field('workers','Количество workers',state.nodes.filter(n=>n.role==='workers').length,'number',1,32)}
+ if(action.startsWith('add_')){field('name','Имя узла');field('ip','IPv4 в подсети кластера')}
+ if(action==='resources'){const n=state.nodes.find(n=>n.name===nodeName);field('cpu','CPU',n.cpu,'number',1,32);field('ram','RAM, МБ',n.ram,'number',state.rancher?4096:1024,65536)}
+ if(action==='version')field('version','Точная версия (например v1.36.4+k3s1)',state.version);
+ if(['destroy','version','remove_master','remove_worker'].includes(action))field('confirmation','Для подтверждения введите УДАЛИТЬ');
+ $('modal').showModal();}
+document.addEventListener('click',e=>{const a=e.target.closest('[data-action]');if(a)openAction(a.dataset.action,a.dataset.node);const c=e.target.closest('[data-credentials]');if(c){currentAction=null;$('fields').replaceChildren();$('form-error').hidden=true;$('modal-title').textContent='Вход в '+(c.dataset.credentials==='rancher'?'Rancher':'Traefik');$('modal-description').textContent='Логин по умолчанию: admin. Выполните команду в каталоге проекта, чтобы получить пароль. Для HTTPS потребуется принять сертификат лаборатории.';const cmd=c.dataset.credentials==='rancher'?"./kubectl.sh -n cattle-system get secret bootstrap-secret -o jsonpath='{.data.bootstrapPassword}' | base64 -d; echo":"./kubectl.sh -n kube-system get secret traefik-dashboard-auth -o jsonpath='{.data.password}' | base64 -d; echo";$('fields').append(element('pre',cmd,'credential'));$('submit').hidden=true;$('modal').showModal()}});
+$('action-form').addEventListener('submit',async e=>{e.preventDefault();if(!currentAction)return;const params=Object.fromEntries(new FormData(e.target));$('submit').disabled=true;try{await api('action',{action:currentAction,params,confirmed:true,confirmation:params.confirmation});$('modal').close();setBusy(true);$('operations').scrollIntoView({behavior:'smooth'});await poll()}catch(e){$('form-error').textContent=e.message;$('form-error').hidden=false}finally{$('submit').disabled=false}});
+for(const id of ['cancel','close'])$(id).onclick=()=>$('modal').close();
+$('refresh').onclick=async()=>{await refresh();await loadLinks()};
+document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav').forEach(n=>n.classList.remove('active'));b.classList.add('active');if(b.dataset.view==='overview')window.scrollTo({top:0,behavior:'smooth'});else $(b.dataset.view).scrollIntoView({behavior:'smooth',block:'start'})});
+let polling=false;
+async function poll(){if(polling)return;polling=true;try{const job=await api('job');if(job){setBusy(job.state==='running');$('job-status').textContent=job.state==='running'?'Выполняется…':job.state==='success'?'Завершено':'Ошибка — проверьте журнал';const log=$('log');const bottom=log.scrollHeight-log.scrollTop-log.clientHeight<50;log.textContent=job.log.replace(/\x1b\[[0-9;]*m/g,'')||'Запускаем операцию…';if(bottom)log.scrollTop=log.scrollHeight;if(lastJob!==job.id+job.state){lastJob=job.id+job.state;if(job.state!=='running'){await refresh();await loadLinks()}}}}catch(e){error(e.message)}finally{polling=false}}
+(async()=>{await refresh();await loadLinks();await poll();setInterval(poll,2000)})();

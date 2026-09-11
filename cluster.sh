@@ -7,7 +7,7 @@ cd "$ROOT"
 export VAGRANT_CWD="$ROOT"
 export VAGRANT_DOTFILE_PATH="$ROOT/.vagrant"
 usage() {
-  echo 'Usage: ./cluster.sh {menu|up [--verify]|destroy|status|verify}'
+  echo 'Usage: ./cluster.sh {menu|web [--port PORT]|up [--verify]|destroy|status|verify}'
   echo 'up       Create/start the cluster and apply Ansible.'
   echo 'destroy  Delete the VMs of this project and their data without a prompt.'
   echo '         Removes local kubeconfig after successful deletion; preserves download caches.'
@@ -20,6 +20,12 @@ case "$command_name" in
   menu)
     [[ $# -eq 0 ]] || { usage >&2; exit 2; }
     exec ruby "$ROOT/scripts/menu.rb"
+    ;;
+  web)
+    export PATH="$PATH:/opt/homebrew/bin:/opt/vagrant/bin:/usr/local/bin"
+    "$ROOT/scripts/install-vagrant.sh"
+    "$ROOT/scripts/install-ansible.sh"
+    exec python3 "$ROOT/web/server.py" "$@"
     ;;
   up) exec "$ROOT/deploy.sh" "$@" ;;
   destroy|status|verify)
