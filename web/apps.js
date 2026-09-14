@@ -68,7 +68,44 @@ function openTemplateEditor(template){
 
 function renderTemplateList(){const area=$('template-picker');area.replaceChildren();for(const t of savedTemplates){const b=element('button',undefined,'template-compact-item');b.type='button';b.append(element('span','▱','template-mini-icon'),element('strong',t.name),element('span',String(t.apps.length),'template-mini-count'),element('span','↗'));b.setAttribute('aria-label',templateCaption(t)+': показать карту');b.onclick=()=>openTemplateMap(t);area.append(b)}}
 async function loadTemplates(){try{const values=await api('templates');savedTemplates=values;$('template-picker').hidden=!savedTemplates.length;$('template-hint').textContent=savedTemplates.length?'Нажмите шаблон, чтобы посмотреть состав.':'Сохраните набор приложений в каталоге.';renderTemplateList()}catch(e){$('apps-message').textContent=e.message}}
-function runTemplate(t){labOpen('Развернуть «'+t.name+'»','Кластер: '+selectedCluster+'. '+t.apps.map(a=>a.name+' ('+a.type+')').join(', ')+'. К префиксам URL добавится namespace и адрес кластера; полные hostname сохранятся.',data=>labAction('template_deploy',{template:t.name,namespace:data.namespace}));labField('namespace','Namespace для всех приложений','dev');}
+function runTemplate(t){
+ let rows=[],checked='',generation=0,loaded=false;
+ const payload=()=>({template:t.name,namespace:ns.value,storage:Object.fromEntries(rows.map(r=>[r.original,{name:r.name.value,storage_mode:r.mode.value,pvc:r.claim.value,storage_secret:r.secret.value,storage:r.size.value}]))});
+ labOpen('Развернуть «'+t.name+'»','По умолчанию создаётся новый набор с новыми PVC и паролями. Существующие данные сохраняются. Для восстановления выберите свободный PVC и прежний Secret.',async()=>{
+  if(!loaded||checked!==JSON.stringify(payload()))throw Error('Проверьте выбранные настройки перед развёртыванием.');
+  await labAction('template_deploy',payload());
+ });
+ $('lab-submit').textContent='Развернуть';
+ const ns=labField('namespace','Namespace для набора','dev');
+ const cards=element('div',undefined,'template-storage-cards'),result=element('div','Получаем свободные имена и PVC…','lab-note');
+ const check=element('button','Проверить перед развёртыванием','button secondary');check.type='button';check.disabled=true;
+ $('lab-extra').append(cards,check,result);
+ const invalidate=()=>{checked='';result.textContent='Настройки изменены. Выполните проверку перед развёртыванием.';result.className='lab-note';};
+ const load=async()=>{
+  const request=++generation;loaded=false;checked='';check.disabled=true;cards.replaceChildren();rows=[];result.className='lab-note';result.textContent='Проверяем свободные имена и хранилища…';
+  try{sameCluster();const data=await api('templates',{operation:'storage-options',template:t.name,namespace:ns.value});
+   if(request!==generation||!cards.isConnected||labCluster!==selectedCluster)return;
+   for(const [i,a] of t.apps.entries()){
+    const card=element('article',undefined,'template-storage-card');card.append(element('strong',a.name+' · '+a.type));const fields=element('div',undefined,'template-editor-fields');card.append(fields);cards.append(card);
+    const field=(key,label,value,type='text',options=null)=>labField('tpl-'+i+'-'+key,label,value,type,options,fields);
+    const name=field('name','Имя нового приложения',data.names[a.name]);
+    const storage=a.storage_mode!=='none';const mode=field('mode','Данные',storage?'new':'none','text',storage?[{value:'new',label:'Новый PVC · пустые данные'},{value:'existing',label:'Подключить существующий PVC'}]:[{value:'none',label:'Без PVC'},{value:'new',label:'Новый PVC'},{value:'existing',label:'Существующий PVC'}]);
+    const size=field('size','Размер нового PVC, GiB',a.storage,'number');
+    const claim=field('pvc','Свободный PVC','','text',[{value:'',label:'Выберите PVC'},...data.pvcs.filter(p=>p.available).map(p=>({value:p.name,label:p.name+' · '+p.capacity}))]);
+    const secret=field('secret','Secret с прежним паролем базы','','text',[{value:'',label:'Выберите Secret'},...data.secrets.map(name=>({value:name,label:name}))]);
+    const update=()=>{const existing=mode.value==='existing',credentials=existing&&['postgres','rabbitmq'].includes(a.type);claim.parentElement.hidden=!existing;claim.required=existing;secret.parentElement.hidden=!credentials;secret.required=credentials;size.parentElement.hidden=mode.value!=='new';size.required=mode.value==='new';invalidate();};
+    mode.onchange=update;update();fields.addEventListener('input',invalidate);fields.addEventListener('change',invalidate);
+    card.append(element('p','Выбор PVC не проверяет формат данных или соответствие пароля базе. Используйте диск этого же приложения и совместимую версию.','lab-note'));
+    rows.push({original:a.name,name,mode,size,claim,secret});
+   }
+   loaded=true;check.disabled=false;result.textContent='Новый набор готов к проверке. Занятые и неготовые PVC исключены из выбора.';
+  }catch(e){if(request===generation&&cards.isConnected){result.textContent=e.message;result.className='lab-note check-failed';}}
+ };
+ ns.addEventListener('input',()=>{generation++;loaded=false;check.disabled=true;invalidate()});ns.addEventListener('change',load);
+ check.onclick=async()=>{try{sameCluster();if(!loaded||!$('lab-form').reportValidity())return;const data=payload(),signature=JSON.stringify(data);check.disabled=true;result.textContent='Проверяем PVC, Secrets, имена, URL и CPU/RAM…';const preview=await api('templates',{...data,operation:'check'});if(!cards.isConnected||signature!==JSON.stringify(payload())||labCluster!==selectedCluster)return;checked=signature;result.replaceChildren(element('strong','✓ Проверка пройдена'));for(const a of preview.apps)result.append(element('p',a.namespace+'/'+a.name+' · '+(a.mode==='new'?'новый PVC: '+a.pvc:a.mode==='existing'?'существующий PVC: '+a.pvc:'без PVC')+(a.secret?' · Secret: '+a.secret:'')));result.className='lab-note check-success';}catch(e){checked='';result.textContent='✕ '+e.message;result.className='lab-note check-failed';}finally{check.disabled=!loaded}};
+ load();
+}
+
 function openUpdate(app){labOpen('Версия и реплики · '+app.name,'Кластер '+selectedCluster+', namespace '+app.namespace+'. Обновление образа выполняется постепенно. PVC сохраняются. Смена major PostgreSQL здесь недоступна.',data=>labAction('app_update',{...data,kind:app.kind,name:app.name,namespace:app.namespace}));const input=labField('container','Контейнер',app.containers[0].name,'text',app.containers.map(c=>c.name));labField('image','Новый образ с тегом',app.containers[0].image);labField('replicas','Число реплик (0 — остановить приложение)',app.replicas,'number');input.onchange=()=>{$('lab-image').value=app.containers.find(c=>c.name===input.value).image};}
 function appConfirm(app,action){labOpen(action==='app_rollback'?'Откатить '+app.name:'Проверить '+app.name,action==='app_rollback'?'Возврат к предыдущей ревизии шаблона Pod. Реплики и данные на диске не откатываются.':'Проверим готовность, DNS и Service. Для приложений каталога — также PostgreSQL SELECT 1 или Redis PING; при наличии HTTP Ingress проверим URL.',()=>labAction(action,{kind:app.kind,name:app.name,namespace:app.namespace}));}
 async function refreshApps(){

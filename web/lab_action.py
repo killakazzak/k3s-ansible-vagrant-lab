@@ -46,10 +46,10 @@ def main():
     elif action in ('app_deploy','template_deploy'):
         configs=params.get('apps',[])
         if action=='template_deploy':
-            template=next((t for t in templates() if t['name']==params.get('template')),None)
-            if not template:raise ValueError('Шаблон не найден')
-            ns=namespace(params.get('namespace'),True)
-            configs=[dict(c,namespace=ns,host=(c['host']+'-'+ns if c['host'] and '.' not in c['host'] else c['host'])) for c in template['apps']]
+            import template_storage
+            prepared=template_storage.prepare(apps,params)
+            for plan in prepared:apps.deploy(plan[0],plan)
+            return
         if not isinstance(configs,list) or not 1<=len(configs)<=10:raise ValueError('Выберите от 1 до 10 приложений')
         validated=[validate(c) for c in configs]
         if len({(c['namespace'],c['name']) for c in validated})!=len(validated):raise ValueError('Повторяются имена приложений')

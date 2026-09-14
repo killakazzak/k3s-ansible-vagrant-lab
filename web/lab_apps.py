@@ -54,6 +54,18 @@ def validate(config):
                 cpu=number(config.get('cpu',100),25,8000,'CPU, millicores'),memory=number(config.get('memory',1024 if kind=='kafka' else 512 if kind=='rabbitmq' else 256),768 if kind=='kafka' else 256 if kind=='rabbitmq' else 32,16384,'RAM, MiB'),
                 storage=number(config.get('storage',2),1,100,'диск, GiB'),port=number(config.get('port',CATALOG[kind]['port']),1,65535,'порт'),host=host)
 
+def claim_referenced(name,objects):
+    for obj in objects:
+        spec=obj.get('spec',{})
+        if obj.get('kind')=='CronJob':spec=spec.get('jobTemplate',{}).get('spec',{})
+        pod=spec.get('template',{}).get('spec',spec)
+        if any(v.get('persistentVolumeClaim',{}).get('claimName')==name for v in pod.get('volumes',[])):return True
+        if obj.get('kind')=='StatefulSet':
+            for claim in spec.get('volumeClaimTemplates',[]):
+                prefix=claim['metadata']['name']+'-'+obj['metadata']['name']+'-'
+                if name.startswith(prefix) and name[len(prefix):].isdigit():return True
+    return False
+
 def templates():
     path=ROOT/'.cache/app-templates.json'
     if not path.exists():return []
@@ -488,6 +500,7 @@ class Apps:
             pvc=self.find('pvc',c['namespace'],c['pvc'])
             if not pvc or pvc.get('metadata',{}).get('deletionTimestamp') or pvc.get('status',{}).get('phase')!='Bound' or pvc.get('spec',{}).get('volumeMode','Filesystem')!='Filesystem':raise ValueError('Нужен готовый Filesystem PVC в выбранном namespace')
             if any(v.get('persistentVolumeClaim',{}).get('claimName')==c['pvc'] for p in self.get('pods',c['namespace'])['items'] for v in p.get('spec',{}).get('volumes',[])):raise ValueError('PVC уже используется Pod. Сначала остановите использующее его приложение.')
+            if claim_referenced(c['pvc'],self.get('deployments,statefulsets,daemonsets,jobs,cronjobs',c['namespace'])['items']):raise ValueError('PVC используется существующим приложением, даже если оно остановлено. Выберите другой PVC.')
             if c['storage_secret']:
                 secret=self.find('secret',c['namespace'],c['storage_secret'])
                 if not secret or not secret.get('data',{}).get('password'):raise ValueError('Secret должен содержать ключ password с прежним паролем базы (пользователь app)')
@@ -500,8 +513,8 @@ class Apps:
         for other in ('Deployment','StatefulSet'):
             if self.find(other,c['namespace'],c['name']):raise ValueError('Приложение с таким именем уже существует')
         if host and any(r.get('host')==host for i in self.get('ingress')['items'] for r in i.get('spec',{}).get('rules',[])):raise ValueError('Этот hostname уже используется Ingress')
-        if c['type'] in ('postgres','rabbitmq') and not c['storage_secret'] and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Secret для базы уже существует; используйте другое имя')
-        if kind=='StatefulSet' and c['storage_mode']=='new' and self.find('pvc',c['namespace'],'data-'+c['name']+'-0'):raise ValueError('Сохранённый PVC уже существует. Используйте другое имя или восстановите приложение вручную.')
+        if c['type'] in ('postgres','rabbitmq') and not c['storage_secret'] and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Сохранённый Secret уже существует. Для новых данных выберите свободное имя приложения; для восстановления выберите существующий PVC и Secret.')
+        if kind=='StatefulSet' and c['storage_mode']=='new' and self.find('pvc',c['namespace'],'data-'+c['name']+'-0'):raise ValueError('Сохранённый PVC уже существует. Выберите его в списке существующих PVC или задайте новое имя приложения для нового диска.')
         return c,kind,objects,host
     def wait_rollout(self,kind,name,ns,seconds=240):
         try:
@@ -549,7 +562,7 @@ class Apps:
         print('TASK [Создать '+ns+'/'+name+']',flush=True)
         if not self.find('namespace',None,ns):self.apply([{'apiVersion':'v1','kind':'Namespace','metadata':{'name':ns}}])
         if c['type'] in ('postgres','rabbitmq') and not c['storage_secret']:
-            self.apply([dict(apiVersion='v1',kind='Secret',metadata=dict(name=name+'-auth',namespace=ns),type='Opaque',stringData={'password':secrets.token_urlsafe(32)})])
+            self.kubectl(['create','-f','-'],dict(apiVersion='v1',kind='Secret',metadata=dict(name=name+'-auth',namespace=ns),type='Opaque',stringData={'password':secrets.token_urlsafe(32)}))
         self.apply(objects)
         print(self.wait_rollout(kind,name,ns),flush=True)
         self.check(c,kind,host)
