@@ -10,7 +10,7 @@ export PATH="$PATH:/opt/homebrew/bin:/opt/vagrant/bin:/usr/local/bin"
 started_at=$SECONDS
 lab_base="$ROOT"
 if [[ "$(basename "$(dirname "$ROOT")")" == .clusters ]]; then lab_base="$(dirname "$(dirname "$ROOT")")"; fi
-export K3S_LAB_CACHE_ROOT="${K3S_LAB_CACHE_ROOT:-$lab_base/.cache/assets}"
+export K3S_LAB_CACHE_ROOT="${K3S_LAB_CACHE_ROOT:-$HOME/.cache/k3s-lab}"
 export ANSIBLE_FORKS="${ANSIBLE_FORKS:-8}"
 [[ "$ANSIBLE_FORKS" =~ ^[1-9][0-9]*$ ]] && (( ANSIBLE_FORKS <= 32 )) || { echo 'ANSIBLE_FORKS must be 1–32'; exit 2; }
 if [[ "${1:-}" == "--help" ]]; then
@@ -99,3 +99,5 @@ echo 'Cluster is ready. Use ./kubectl.sh or export KUBECONFIG="$PWD/kubeconfig".
 ansible-playbook ansible/access.yml
 
 printf "Completed in %s seconds.\n" "$((SECONDS-started_at))"
+
+python3 "$ROOT/scripts/image-cache.py" capture --cluster "$ROOT" || echo "[Кеш] Не удалось сохранить образы; кластер продолжает работать."

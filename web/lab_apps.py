@@ -557,12 +557,22 @@ class Apps:
             for k in need:budget[node['metadata']['name']]['requests'][k]+=need[k]
         print('Проверка CPU/RAM пройдена (оценка по requests; PVC, affinity и ResourceQuota могут дополнительно ограничить размещение).',flush=True)
 
+    def image_cache(self,operation,images=None):
+        if self.env.get('K3S_LAB_IMAGE_CACHE','1')=='0':return
+        import sys
+        try:
+            subprocess.run([sys.executable,str(ROOT/'scripts/image-cache.py'),operation,'--cluster',str(self.root)],env=self.env,input=json.dumps(images or []),text=True,check=True,timeout=1800)
+        except (OSError,subprocess.SubprocessError):
+            print('[Кеш] Операция с локальным кешем не завершена. При необходимости containerd скачает образ обычным способом.',flush=True)
+
     def deploy(self,config,prepared=None):
         c,kind,objects,host=prepared or self.preflight(config);ns=c['namespace'];name=c['name']
         print('TASK [Создать '+ns+'/'+name+']',flush=True)
         if not self.find('namespace',None,ns):self.apply([{'apiVersion':'v1','kind':'Namespace','metadata':{'name':ns}}])
         if c['type'] in ('postgres','rabbitmq') and not c['storage_secret']:
             self.kubectl(['create','-f','-'],dict(apiVersion='v1',kind='Secret',metadata=dict(name=name+'-auth',namespace=ns),type='Opaque',stringData={'password':secrets.token_urlsafe(32)}))
+        images=[container['image'] for obj in objects if obj['kind'] in ('Deployment','StatefulSet') for container in obj['spec']['template']['spec'].get('containers',[])+obj['spec']['template']['spec'].get('initContainers',[])]
+        self.image_cache('restore',images)
         self.apply(objects)
         print(self.wait_rollout(kind,name,ns),flush=True)
         self.check(c,kind,host)
@@ -572,6 +582,7 @@ class Apps:
         print('Готово: '+(host and 'http://'+host+'/' or name+'.'+ns+'.svc.cluster.local:'+str(c['port'])),flush=True)
         if c['type']=='rabbitmq':print('RabbitMQ: пользователь app, пароль в Secret '+ns+'/'+(c['storage_secret'] or name+'-auth')+' (ключ password).',flush=True)
         if c['type']=='postgres':print('PostgreSQL: пользователь app, база app, пароль в Secret '+ns+'/'+(c['storage_secret'] or name+'-auth')+' (ключ password).',flush=True)
+        self.image_cache('capture')
     def check(self,c,kind,host=''):
         obj=self.get(kind,c['namespace'],c['name'])
         self.record_check(obj,'running')
