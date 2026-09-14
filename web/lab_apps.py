@@ -60,13 +60,26 @@ def templates():
     data=json.loads(path.read_text())
     return data if isinstance(data,list) else []
 
-def save_template(data):
+def template_value(data):
     name=dns(data.get('name',''),'имя шаблона');items=data.get('apps')
     if not isinstance(items,list) or not 1<=len(items)<=10:raise ValueError('В шаблоне должно быть от 1 до 10 приложений')
     apps=[validate(c) for c in items]
     if len({(a['namespace'],a['name']) for a in apps})!=len(apps):raise ValueError('Имена приложений в namespace должны отличаться')
-    values=[v for v in templates() if v['name']!=name]+[dict(name=name,apps=apps)]
-    return write_templates(values)
+    return dict(name=name,apps=apps)
+
+def save_template(data):
+    value=template_value(data)
+    return write_templates([v for v in templates() if v['name']!=value['name']]+[value])
+
+def update_template(data):
+    original=dns(data.get('original_name',''),'исходное имя шаблона')
+    values=templates()
+    current=next((v for v in values if v['name']==original),None)
+    if current is None:raise ValueError('Шаблон удалён. Обновите список шаблонов.')
+    if data.get('expected')!=current:raise ValueError('Шаблон уже изменён. Закройте редактор и откройте его заново.')
+    value=template_value(data)
+    if value['name']!=original and any(v['name']==value['name'] for v in values):raise ValueError('Шаблон с таким именем уже существует')
+    return write_templates([value if v['name']==original else v for v in values])
 
 def delete_template(data):
     name=dns(data.get('name',''),'имя шаблона')

@@ -33,6 +33,14 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(self.request('/api/shutdown', {})[0],409)
         self.assertFalse(app.STOPPING)
 
+    def test_template_update_route_saves_without_starting_job(self):
+        payload=dict(operation='update',original_name='stand',expected={},name='stand',apps=[])
+        with patch.object(app.lab_apps,'update_template',return_value={'ok':True}) as update:
+            status,body=self.request('/api/templates',payload)
+            self.assertEqual(status,200);self.assertTrue(json.loads(body)['ok'])
+            update.assert_called_once_with(payload)
+            self.assertIsNone(app.JOB)
+
     def test_lab_endpoints_require_auth(self):
         for path, payload in [('/api/apps',None),('/api/templates',None),('/api/templates',{'name':'test','apps':[]}),('/api/pod',{'name':'p','namespace':'dev'}),('/api/pods',{'name':'app','namespace':'dev','kind':'Deployment'})]:
             self.assertEqual(self.request(path,payload,token=False)[0],401)

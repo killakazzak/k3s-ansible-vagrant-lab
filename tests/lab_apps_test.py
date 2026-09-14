@@ -18,6 +18,28 @@ class LabTests(unittest.TestCase):
   with patch.object(app,'kubectl',side_effect=ValueError('original failure')),patch.object(app,'workload_pods',side_effect=ValueError('API unavailable')):
    with self.assertRaisesRegex(ValueError,'original failure'):app.wait_rollout('Deployment','web','dev')
 
+ def test_update_template_renames_and_preserves_other_templates(self):
+  with tempfile.TemporaryDirectory() as folder,patch.object(lab,'ROOT',Path(folder)),patch.object(lab.Apps,'kubectl') as kube:
+   for name in ('one','two'):lab.save_template({'name':name,'apps':[{'name':'web','namespace':'dev'}]})
+   before=lab.templates()
+   lab.update_template(dict(original_name='one',expected=before[0],name='renamed',apps=[dict(name='db',type='postgres',memory=512),dict(name='frontend',cpu=250)]))
+   result=lab.templates()
+   self.assertEqual([t['name'] for t in result],['renamed','two'])
+   self.assertEqual(result[1],before[1]);self.assertEqual(result[0]['apps'][1]['cpu'],250)
+   kube.assert_not_called()
+ def test_update_template_rejects_collision_invalid_and_stale_edits(self):
+  with tempfile.TemporaryDirectory() as folder,patch.object(lab,'ROOT',Path(folder)):
+   for name in ('one','two'):lab.save_template({'name':name,'apps':[{'name':'web'}]})
+   before=lab.templates();payload=dict(original_name='one',expected=before[0],name='one',apps=[{'name':'changed'}])
+   for changes in [dict(name='two'),dict(apps=[{'name':'bad name'}]),dict(expected={})]:
+    with self.assertRaises(ValueError):lab.update_template(dict(payload,**changes))
+    self.assertEqual(lab.templates(),before)
+   lab.update_template(payload)
+   with self.assertRaisesRegex(ValueError,'уже изменён'):lab.update_template(payload)
+   lab.delete_template({'name':'one'})
+   with self.assertRaisesRegex(ValueError,'удалён'):lab.update_template(payload)
+   self.assertEqual(lab.templates(),[before[1]])
+
  def test_delete_template_preserves_other_templates(self):
   with tempfile.TemporaryDirectory() as folder,patch.object(lab,'ROOT',Path(folder)):
    for name in ('one','two'):lab.save_template({'name':name,'apps':[{'name':'web','namespace':'dev'}]})

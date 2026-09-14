@@ -546,6 +546,7 @@ class Handler(BaseHTTPRequestHandler):
                 with LOCK:
                     operation=data.get('operation','save')
                     if operation=='delete':return self.reply(200, lab_apps.delete_template(data))
+                    if operation=='update':return self.reply(200, lab_apps.update_template(data))
                     if operation=='from_apps':return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).template_from_apps(data))
                     if operation!='save':raise ValueError('Неизвестная операция с шаблоном')
                     return self.reply(200, lab_apps.save_template(data))

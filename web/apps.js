@@ -2,10 +2,10 @@
 const selectedApps=new Map();let selectionCluster=null;
 let labSubmit=null,labCluster=null,appsLoading=false,labDraft=[],savedTemplates=[];
 const catalogDefaults={nginx:{image:'nginx:1.30.4-alpine',port:80,memory:128},postgres:{image:'postgres:18.6-alpine',port:5432,memory:256},redis:{image:'redis:8.10.1-alpine',port:6379,memory:128},kafka:{image:'apache/kafka:4.3.1',port:9092,memory:1024},rabbitmq:{image:'rabbitmq:4.3.5-management',port:5672,memory:512},custom:{image:'',port:8080,memory:128}};
-function labField(name,label,value='',type='text',options=null){
+function labField(name,label,value='',type='text',options=null,parent=$('lab-fields')){
  const wrap=element('div');const l=element('label',label);l.htmlFor='lab-'+name;const input=document.createElement(options?'select':'input');input.id='lab-'+name;input.name=name;
  if(options){for(const option of options){const o=element('option',typeof option==='string'?option:option.label);o.value=typeof option==='string'?option:option.value;input.append(o)}}else{input.type=type;input.required=true;if(type==='number')input.min='0';}
- input.value=value;wrap.append(l,input);$('lab-fields').append(wrap);return input;
+ input.value=value;wrap.append(l,input);parent.append(wrap);return input;
 }
 function labOpen(title,description,submit){labCluster=selectedCluster;labSubmit=submit;$('lab-title').textContent=title;$('lab-description').textContent=description;$('lab-fields').replaceChildren();$('lab-extra').replaceChildren();$('lab-error').hidden=true;$('lab-submit').textContent='Подтвердить';$('lab-submit').hidden=!submit;$('lab-submit').disabled=false;$('lab-dialog').showModal();}
 function labError(e){$('lab-error').textContent=e.message||String(e);$('lab-error').hidden=false;}
@@ -37,8 +37,35 @@ function openTemplateMap(t){
  const nodes=element('div',undefined,'template-map-nodes');
  const icons={postgres:'PG',redis:'R',kafka:'K',rabbitmq:'MQ',nginx:'N',custom:'APP'};
  for(const a of t.apps){const node=element('article',undefined,'template-map-node');const head=element('div',undefined,'template-map-node-head');head.append(element('span',icons[a.type]||'APP','template-map-symbol'),element('strong',a.name));node.append(head,element('code',a.image));const info=element('div',undefined,'template-map-spec');for(const text of [a.type,a.replicas+' репл.',a.cpu+'m CPU',a.memory+' MiB RAM'])info.append(element('span',text));node.append(info);if(a.storage_mode&&a.storage_mode!=='none')node.append(element('p',a.storage_mode==='existing'?'PVC: '+a.pvc+' · существующий':'Диск: '+a.storage+' GiB · новый PVC'));if(a.host)node.append(element('p','URL: '+a.host));if(['postgres','redis','kafka'].includes(a.type))node.append(element('p','+ '+({postgres:'pgAdmin',redis:'Redis Insight',kafka:'AKHQ'}[a.type])+' · веб-панель'));nodes.append(node)}
- map.append(nodes);$('lab-extra').append(map);const actions=element('div',undefined,'template-map-actions');const run=element('button','Развернуть →','button primary');run.type='button';run.disabled=busy;run.dataset.templateRun='true';run.onclick=()=>runTemplate(t);const del=element('button','Удалить шаблон','button secondary');del.type='button';del.onclick=()=>deleteTemplate(t.name);actions.append(del,run);$('lab-extra').append(actions);
+ map.append(nodes);$('lab-extra').append(map);const actions=element('div',undefined,'template-map-actions');const run=element('button','Развернуть →','button primary');run.type='button';run.disabled=busy;run.dataset.templateRun='true';run.onclick=()=>runTemplate(t);const del=element('button','Удалить шаблон','button secondary');del.type='button';del.onclick=()=>deleteTemplate(t.name);const edit=element('button','Редактировать','button secondary');edit.type='button';edit.onclick=()=>openTemplateEditor(t);actions.append(edit,del,run);$('lab-extra').append(actions);
 }
+
+function openTemplateEditor(template){
+ const expected=JSON.parse(JSON.stringify(template));let items=JSON.parse(JSON.stringify(template.apps)),active=0;
+ labOpen('Редактировать шаблон','Изменения сохраняются только в шаблоне. Развёртывание запускается отдельно.',async data=>{
+  capture();await api('templates',{operation:'update',original_name:expected.name,expected,name:data.templateName,apps:items});
+  $('lab-dialog').close();await loadTemplates();$('apps-message').textContent='Шаблон «'+data.templateName+'» обновлён.';
+ });
+ $('lab-submit').textContent='Сохранить изменения';labField('templateName','Имя шаблона',template.name);
+ const layout=element('div',undefined,'template-editor'),side=element('div',undefined,'template-editor-list'),panel=element('div',undefined,'template-editor-panel');layout.append(side,panel);$('lab-extra').append(layout);
+ const capture=()=>{if(!panel.childElementCount)return;const values={...items[active]};for(const input of panel.querySelectorAll('input,select'))values[input.name]=input.value;items[active]=values;};
+ const valid=()=>[...panel.querySelectorAll('input,select')].every(input=>input.reportValidity());
+ const drawList=()=>{side.replaceChildren();side.append(element('small','ПРИЛОЖЕНИЯ · '+items.length+'/10','template-editor-caption'));items.forEach((a,i)=>{const b=element('button',undefined,'template-editor-item'+(i===active?' active':''));b.type='button';b.setAttribute('aria-pressed',String(i===active));b.append(element('strong',a.name),element('small',a.type+' · '+a.namespace));b.onclick=()=>{if(!valid())return;capture();active=i;draw();};side.append(b)});
+  const add=element('button','＋ Добавить приложение','button secondary');add.type='button';add.disabled=items.length>=10;add.onclick=()=>{if(!valid())return;capture();let n=1;while(items.some(a=>a.name==='web-'+n))n++;items.push({type:'nginx',name:'web-'+n,namespace:'dev',image:catalogDefaults.nginx.image,port:80,replicas:1,cpu:100,memory:128,storage:2,storage_mode:'none',pvc:'',storage_secret:'',mount_path:'/data',host:'',shovel:false});active=items.length-1;draw()};side.append(add);
+ };
+ const draw=()=>{panel.replaceChildren();const a=items[active];const head=element('div',undefined,'template-editor-heading');head.append(element('strong',a.name));const remove=element('button','Удалить из шаблона','button secondary');remove.type='button';remove.disabled=items.length===1;remove.onclick=()=>{items.splice(active,1);active=Math.min(active,items.length-1);draw()};head.append(remove);panel.append(head);
+  const fields=element('div',undefined,'template-editor-fields');panel.append(fields);
+  const field=(name,label,value,type='text',options=null)=>labField(name,label,value??'',type,options,fields);
+  const type=field('type','Приложение',a.type,'text',Object.keys(catalogDefaults));field('name','Имя приложения',a.name);field('namespace','Namespace',a.namespace);field('image','Образ с версией',a.image);field('port','Порт контейнера',a.port,'number');field('replicas','Реплики',a.replicas,'number');field('cpu','CPU, millicores',a.cpu,'number');field('memory','RAM, MiB',a.memory,'number');field('storage','Диск, GiB',a.storage,'number');
+  const mode=field('storage_mode','Хранилище',a.storage_mode||'none','text',[{value:'none',label:'Без PVC'},{value:'new',label:'Новый PVC'},{value:'existing',label:'Существующий PVC'}]);
+  const pvc=field('pvc','Имя существующего PVC',a.pvc);const secret=field('storage_secret','Secret с прежним паролем',a.storage_secret);const mount=field('mount_path','Путь монтирования',a.mount_path||'/data');const host=field('host','URL: префикс или hostname',a.host);host.required=false;
+  if(a.type==='rabbitmq')field('shovel','Shovel',String(a.shovel===true||a.shovel==='true'),'text',[{value:'false',label:'Выключен'},{value:'true',label:'Включён'}]);
+  const storageState=()=>{const existing=mode.value==='existing',needsSecret=existing&&['postgres','rabbitmq'].includes(type.value);pvc.required=existing;pvc.parentElement.hidden=!existing;secret.required=needsSecret;secret.parentElement.hidden=!needsSecret;mount.required=mode.value!=='none';mount.parentElement.hidden=mode.value==='none';};mode.onchange=storageState;storageState();
+  type.onchange=()=>{capture();const d=catalogDefaults[type.value],db=['postgres','redis','kafka','rabbitmq'].includes(type.value);Object.assign(items[active],{image:d.image,port:d.port,memory:d.memory,replicas:1,storage_mode:db?'new':'none',pvc:'',storage_secret:'',shovel:false});draw()};
+  panel.append(element('p','Лимиты CPU/RAM = 2 × запрос. PVC и Secret должны находиться в namespace приложения. Для баз доступна одна реплика.','lab-note'));drawList();
+ };draw();
+}
+
 function renderTemplateList(){const area=$('template-picker');area.replaceChildren();for(const t of savedTemplates){const b=element('button',undefined,'template-compact-item');b.type='button';b.append(element('span','▱','template-mini-icon'),element('strong',t.name),element('span',String(t.apps.length),'template-mini-count'),element('span','↗'));b.setAttribute('aria-label',templateCaption(t)+': показать карту');b.onclick=()=>openTemplateMap(t);area.append(b)}}
 async function loadTemplates(){try{const values=await api('templates');savedTemplates=values;$('template-picker').hidden=!savedTemplates.length;$('template-hint').textContent=savedTemplates.length?'Нажмите шаблон, чтобы посмотреть состав.':'Сохраните набор приложений в каталоге.';renderTemplateList()}catch(e){$('apps-message').textContent=e.message}}
 function runTemplate(t){labOpen('Развернуть «'+t.name+'»','Кластер: '+selectedCluster+'. '+t.apps.map(a=>a.name+' ('+a.type+')').join(', ')+'. К префиксам URL добавится namespace и адрес кластера; полные hostname сохранятся.',data=>labAction('template_deploy',{template:t.name,namespace:data.namespace}));labField('namespace','Namespace для всех приложений','dev');}
