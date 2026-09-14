@@ -157,6 +157,20 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(self.request('/../ansible/inventory.yml')[0],404)
 
 class ClusterIsolationTests(unittest.TestCase):
+    def test_fresh_checkout_has_no_clusters_or_nodes(self):
+        import tempfile, shutil
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            shutil.copytree(app.ROOT/'ansible',root/'ansible')
+            previous=app.active_root()
+            try:
+                with patch.object(app,'ROOT',root):
+                    app.CONTEXT.root=root
+                    self.assertEqual(app.config()['nodes'],[])
+                    self.assertEqual(app.visible_clusters(),[])
+                    self.assertEqual(app.next_cluster_name(),'k8s-cluster1')
+            finally:app.CONTEXT.root=previous
+
     def test_profiles_and_networks_are_isolated(self):
         import tempfile, shutil
         with tempfile.TemporaryDirectory() as directory:

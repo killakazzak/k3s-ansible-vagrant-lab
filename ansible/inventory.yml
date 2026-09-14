@@ -1,15 +1,7 @@
+# Fresh clones have no clusters or nodes. Create one through the menu or web UI.
 all:
   children:
     server:
-      hosts:
-        k3s-master1:
-          ansible_host: 192.168.58.11
-          vagrant_id: k3s-master1
+      hosts: {}
     workers:
-      hosts:
-        k3s-worker1:
-          ansible_host: 192.168.58.21
-          vagrant_id: k3s-worker1
-        k3s-worker2:
-          ansible_host: 192.168.58.22
-          vagrant_id: k3s-worker2
+      hosts: {}
