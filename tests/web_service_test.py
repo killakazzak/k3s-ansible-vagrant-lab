@@ -1,4 +1,4 @@
-import json, os, shutil, subprocess, sys, tempfile, unittest
+import json, os, shutil, socket, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.parse import urlsplit, parse_qs
@@ -13,7 +13,15 @@ class WebServiceTests(unittest.TestCase):
             command=[sys.executable,str(root/'scripts/web-service.py')]
             def run(*args):return subprocess.run(command+list(args),capture_output=True,text=True,timeout=15)
             try:
-                self.assertEqual(run('start','--port','0').returncode,0)
+                with socket.socket() as occupied:
+                    occupied.bind(('127.0.0.1',0));occupied.listen()
+                    busy_port=occupied.getsockname()[1]
+                    result=run('start','--port',str(busy_port))
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    assigned=urlsplit(json.loads((root/'.cache/web.lock').read_text())['url']).port
+                    self.assertNotEqual(assigned,busy_port)
+                    # Our listener must remain alive after the server chooses another port.
+                    self.assertEqual(occupied.getsockname()[1],busy_port)
                 info=(root/'.cache/web.lock').read_text()
                 self.assertEqual(run('start').returncode,0)
                 self.assertEqual((root/'.cache/web.lock').read_text(),info)

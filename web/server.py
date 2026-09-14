@@ -2,6 +2,7 @@
 """Loopback-only cluster console; standard library, no pip dependencies."""
 import sys
 import argparse
+import errno
 import re
 import shutil
 import shlex
@@ -646,7 +647,16 @@ if __name__ == '__main__':
         print('Веб-консоль уже работает. Откройте существующий интерфейс:')
         print(url, flush=True)
         raise SystemExit(0)
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+    if not 0 <= args.port <= 65535:
+        parser.error('port must be between 0 and 65535')
+    try:
+        server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+    except OSError as error:
+        if error.errno != errno.EADDRINUSE or args.port == 0:
+            raise
+        # Do not terminate an unknown listener, including a server from a deleted checkout.
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        print(f'Порт {args.port} занят. Выбран свободный порт {server.server_port}.', file=sys.stderr, flush=True)
     url = f'http://127.0.0.1:{server.server_port}/#token={TOKEN}'
     instance_lock.seek(0)
     instance_lock.truncate()
