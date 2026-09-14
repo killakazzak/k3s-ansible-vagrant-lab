@@ -36,3 +36,6 @@ __pycache__/
 # Offline release archives (distributed through GitHub Releases)
 vendor/offline/
 .offline-venv/
+
+# Installers live in Releases and the local cache
+vendor/vagrant/*.dmg

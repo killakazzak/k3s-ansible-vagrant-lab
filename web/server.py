@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import terminal_sessions
 import topology
 import lab_apps
+import profile_layout
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV = dict(os.environ)
@@ -170,11 +171,7 @@ def new_cluster(name, cidr, params=None):
         raise ValueError('Такое имя уже существует')
     temp = Path(tempfile.mkdtemp(prefix='.new-', dir=folder))
     try:
-        for directory in ['ansible', 'scripts', 'web']:
-            shutil.copytree(ROOT / directory, temp / directory, ignore=shutil.ignore_patterns('__pycache__', '*.log', '*.retry'))
-        for filename in ['Vagrantfile', 'cluster.sh', 'deploy.sh', 'kubectl.sh', 'ansible.cfg']:
-            shutil.copy2(ROOT / filename, temp / filename)
-        (temp / 'vendor').symlink_to(ROOT / 'vendor', target_is_directory=True)
+        profile_layout.initialize(ROOT, temp)
         code = """require 'yaml';require 'json'; p=JSON.parse(STDIN.read); path='ansible/group_vars/all.yml'; s=File.read(path); {'vm_name_prefix'=>'', 'menu_node_prefix'=>p['name'], 'private_network_prefix'=>24}.each{|k,v| s=s.sub(/^#{k}:.*$/,k+': '+JSON.generate(v))}; File.write(path,s); groups={}; {'server'=>[11,'master',1], 'workers'=>[21,'worker',2]}.each{|role,(offset,label,count)| h={};count.times{|i| n=p['name']+'-'+label+(i+1).to_s;h[n]={'ansible_host'=>p['base']+(offset+i).to_s,'vagrant_id'=>n}};groups[role]={'hosts'=>h}};File.write('ansible/inventory.yml',YAML.dump({'all'=>{'children'=>groups}}))"""
         proc = subprocess.run(['ruby','-e',code], cwd=temp, input=json.dumps({'name':name,'base':str(network.network_address).rsplit('.',1)[0]+'.'}), capture_output=True, text=True)
         if proc.returncode:

@@ -9,6 +9,8 @@
 - Подписант PKG: `Hashicorp, Inc. (D38WU7D763)`; при проверке macOS подтвердила нотариальное заверение Apple.
 - Лицензия поставщика сохранена в `LICENSE`; источник: https://github.com/hashicorp/vagrant/blob/v2.4.9/LICENSE.
 
-Установщик хранится обычным файлом Git, без Git LFS и без отдельного GitHub Release. Он автоматически приходит вместе с клоном репозитория. `scripts/install-vagrant.sh` устанавливает его только при отсутствии Vagrant; `--check` проверяет SHA256 и подпись без установки.
+Установщик опубликован в [GitHub Release vagrant-2.4.9](https://github.com/killakazzak/k3s-ansible-vagrant-lab/releases/tag/vagrant-2.4.9), а не в текущем дереве Git.
+`scripts/install-vagrant.sh` скачивает его только при отсутствии Vagrant и сохраняет в `.cache/installers` корневого проекта. Повторные установки используют кеш.
+`--check` проверяет SHA256 и подпись без установки. Для полностью офлайн-установки заранее выполните эту команду или перенесите проверенный DMG в `.cache/installers`.
 
-Для замены версии одновременно обновите DMG, официальный файл SHA256SUMS и параметры `vagrant_version`, `vagrant_installer_sha256` в `ansible/group_vars/all.yml`. Не изменяйте содержимое официального DMG.
+При смене версии опубликуйте оригинальный DMG в release `vagrant-<версия>` и обновите `vagrant_version`, `vagrant_installer_sha256` и официальный SHA256SUMS в Git.

@@ -1,6 +1,6 @@
 require "yaml"
 require "ipaddr"
-root = File.dirname(__FILE__)
+root = ENV.fetch("VAGRANT_CWD", File.dirname(__FILE__))
 settings = YAML.load_file(File.join(root, "ansible/group_vars/all.yml"))
 groups = YAML.load_file(File.join(root, "ansible/inventory.yml")).fetch("all").fetch("children")
 raise "At least one server is required" if groups.fetch("server").fetch("hosts").empty?

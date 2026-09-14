@@ -3,6 +3,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+export VAGRANT_CWD="$ROOT"
+export VAGRANT_DOTFILE_PATH="$ROOT/.vagrant"
 export PATH="$ROOT/.offline-venv/bin:$PATH"
 export PATH="$PATH:/opt/homebrew/bin:/opt/vagrant/bin:/usr/local/bin"
 started_at=$SECONDS

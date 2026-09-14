@@ -430,7 +430,7 @@ class ClusterMenu
 end
 
 if $PROGRAM_NAME == __FILE__
-  root = File.expand_path('..', __dir__)
+  root = File.expand_path(ENV.fetch('VAGRANT_CWD', File.expand_path('..', __dir__)))
   ENV['VAGRANT_CWD'] = root
   ENV['VAGRANT_DOTFILE_PATH'] = File.join(root, '.vagrant')
   ClusterMenu.new(root).start

@@ -3,7 +3,7 @@ require 'yaml'
 require 'json'
 require 'fileutils'
 require 'ipaddr'
-root = File.expand_path('..', __dir__)
+root = File.expand_path(ENV.fetch('VAGRANT_CWD', File.expand_path('..', __dir__)))
 Dir.chdir(root)
 ENV['VAGRANT_CWD'] = root
 ENV['VAGRANT_DOTFILE_PATH'] = File.join(root, '.vagrant')
