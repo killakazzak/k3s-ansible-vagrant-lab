@@ -61,8 +61,8 @@ kubernetes_version="${kubernetes_version%%+*}"
 mkdir -p .tools
 if [[ ! -x .tools/kubectl || ! -f .tools/kubectl.version || "$(cat .tools/kubectl.version)" != "$kubernetes_version" ]]; then
   base_url="https://dl.k8s.io/release/$kubernetes_version/bin/darwin/arm64"
-  curl --fail --location --retry 3 "$base_url/kubectl" -o .tools/kubectl.download
-  curl --fail --location --retry 3 "$base_url/kubectl.sha256" -o .tools/kubectl.sha256
+  "$ROOT/scripts/download.sh" "kubectl $kubernetes_version (macOS ARM64)" "$base_url/kubectl" .tools/kubectl.download
+  "$ROOT/scripts/download.sh" "SHA256 для kubectl $kubernetes_version" "$base_url/kubectl.sha256" .tools/kubectl.sha256
   expected="$(tr -d '[:space:]' < .tools/kubectl.sha256)"
   actual="$(shasum -a 256 .tools/kubectl.download | awk '{print $1}')"
   [[ "$expected" == "$actual" ]] || { echo 'kubectl checksum mismatch.' >&2; exit 1; }
@@ -74,7 +74,8 @@ vagrant validate
 ansible-playbook --syntax-check ansible/site.yml
 mkdir -p .cache
 # Overlap downloading k3s with starting the VMs.
-ansible-playbook ansible/assets.yml > .cache/assets.log 2>&1 &
+echo "[Этап] Загрузка k3s и контейнеров в кеш одновременно с запуском VM"
+PYTHONUNBUFFERED=1 ansible-playbook ansible/assets.yml > >(tee .cache/assets.log) 2>&1 &
 assets_pid=$!
 trap 'kill "$assets_pid" 2>/dev/null || true' EXIT
 if [[ "$(setting vm_provider)" == virtualbox ]]; then
@@ -86,6 +87,7 @@ if ! wait "$assets_pid"; then
   exit 1
 fi
 trap - EXIT
+echo "[Этап] Проверка SSH и настройка узлов через Ansible"
 ansible all -m ping
 ansible-playbook ansible/site.yml
 if [[ "${1:-}" == "--verify" ]]; then

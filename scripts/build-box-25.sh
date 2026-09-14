@@ -12,8 +12,8 @@ CACHE="$ROOT/.cache/box25"
 mkdir -p "$CACHE"
 PACKER="$CACHE/packer"
 if [[ ! -x "$PACKER" ]]; then
-  curl -fL --retry 3 https://releases.hashicorp.com/packer/1.14.2/packer_1.14.2_darwin_arm64.zip -o "$CACHE/packer_1.14.2_darwin_arm64.zip"
-  curl -fL --retry 3 https://releases.hashicorp.com/packer/1.14.2/packer_1.14.2_SHA256SUMS -o "$CACHE/SHA256SUMS"
+  "$ROOT/scripts/download.sh" "Packer 1.14.2" https://releases.hashicorp.com/packer/1.14.2/packer_1.14.2_darwin_arm64.zip "$CACHE/packer_1.14.2_darwin_arm64.zip"
+  "$ROOT/scripts/download.sh" "SHA256 для Packer" https://releases.hashicorp.com/packer/1.14.2/packer_1.14.2_SHA256SUMS "$CACHE/SHA256SUMS"
   (cd "$CACHE"; grep ' packer_1.14.2_darwin_arm64.zip$' SHA256SUMS | shasum -a 256 -c -)
   unzip -o "$CACHE/packer_1.14.2_darwin_arm64.zip" packer -d "$CACHE"
 fi

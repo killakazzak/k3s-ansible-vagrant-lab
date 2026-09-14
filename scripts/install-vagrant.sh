@@ -31,7 +31,7 @@ if [[ ! -f "$dmg" ]]; then
     url="https://github.com/killakazzak/k3s-ansible-vagrant-lab/releases/download/vagrant-${version}/vagrant_${version}_darwin_arm64.dmg"
     temporary="$(mktemp "$cache/.vagrant-download.XXXXXX")"
     trap 'rm -f "$temporary"' EXIT
-    curl --fail --location --retry 3 --connect-timeout 20 "$url" -o "$temporary"
+    "$ROOT/scripts/download.sh" "Vagrant $version (macOS ARM64)" "$url" "$temporary"
     actual="$(shasum -a 256 "$temporary" | awk '{print $1}')"
     [[ "$actual" == "$expected" ]] || { echo 'Downloaded Vagrant checksum mismatch.' >&2; exit 1; }
     mv "$temporary" "$dmg"

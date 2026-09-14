@@ -5,6 +5,7 @@
   gather_facts: false
   vars_files: [group_vars/all.yml]
   vars:
+    asset_socket_timeout: "{{ lookup('env', 'K3S_DOWNLOAD_CONNECT_TIMEOUT') | default('10', true) | int }}"
     ansible_become: false
     ansible_ssh_private_key_file: ""
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
@@ -36,39 +37,55 @@
         mode: '0755'
       loop: [k3s-arm64, install.sh]
       when: use_offline_bundle | bool
-    - name: Download ARM64 binary with release checksum
+    - name: "Загрузка k3s-arm64 и SHA256 — {{ k3s_release_url }}"
       when: not use_offline_bundle | bool
+      register: asset_download_result
+      retries: 3
+      delay: 2
+      until: asset_download_result is succeeded
       ansible.builtin.get_url:
         url: "{{ k3s_release_url }}/k3s-arm64"
         checksum: "sha256:{{ k3s_release_url }}/sha256sum-arm64.txt"
         dest: "{{ asset_cache }}/k3s-arm64"
         mode: '0755'
-        timeout: "{{ download_timeout }}"
-    - name: Download installer from the same release tag
+        timeout: "{{ asset_socket_timeout }}"
+    - name: "Загрузка install.sh — {{ k3s_installer_url }}"
       when: not use_offline_bundle | bool
+      register: asset_download_result
+      retries: 3
+      delay: 2
+      until: asset_download_result is succeeded
       ansible.builtin.get_url:
         url: "{{ k3s_installer_url }}"
         dest: "{{ asset_cache }}/install.sh"
         mode: '0644'
-        timeout: "{{ download_timeout }}"
-    - name: Cache core container images once per k3s release
+        timeout: "{{ asset_socket_timeout }}"
+    - name: "Загрузка k3s-airgap-images-arm64.tar.zst — {{ k3s_release_url }}"
+      register: asset_download_result
+      retries: 3
+      delay: 2
+      until: asset_download_result is succeeded
       ansible.builtin.get_url:
         url: "{{ k3s_release_url }}/k3s-airgap-images-arm64.tar.zst"
         checksum: "sha256:{{ k3s_release_url }}/sha256sum-arm64.txt"
         dest: "{{ asset_cache }}/k3s-airgap-images-arm64.tar.zst"
-        timeout: "{{ download_timeout }}"
+        timeout: "{{ asset_socket_timeout }}"
         mode: '0644'
       when: not use_offline_bundle | bool
     - name: Select container archives for chosen components
       ansible.builtin.set_fact:
         cached_image_archives: "{{ ([offline_bundle + '/images/k3s-airgap-images-arm64.tar.zst'] + (lookup('fileglob', offline_bundle + '/images/*.tar', wantlist=True) if rancher_enabled | bool else [])) if use_offline_bundle | bool else [asset_cache + '/k3s-airgap-images-arm64.tar.zst'] }}"
-    - name: Cache Helm charts for selected Rancher version
+    - name: "Загрузка Helm charts Rancher {{ rancher_version }} и cert-manager {{ cert_manager_version }}"
       when: rancher_enabled | bool and not use_offline_bundle | bool
+      register: asset_download_result
+      retries: 3
+      delay: 2
+      until: asset_download_result is succeeded
       ansible.builtin.get_url:
         url: "{{ item.url }}"
         dest: "{{ asset_cache }}/{{ item.name }}-{{ item.version }}.tgz"
         mode: '0644'
-        timeout: "{{ download_timeout }}"
+        timeout: "{{ asset_socket_timeout }}"
       loop:
         - {name: rancher, version: "{{ rancher_version }}", url: "{{ rancher_chart_repo }}/rancher-{{ rancher_version }}.tgz"}
         - {name: cert-manager, version: "{{ cert_manager_version }}", url: "{{ cert_manager_chart_repo }}/charts/cert-manager-{{ cert_manager_version }}.tgz"}

@@ -11,7 +11,7 @@ while read -r checksum name; do
   [[ "$name" == offline-macos-arm64.tar.part-* && "$name" != */* ]] || exit 1
   if [[ ! -f "$CACHE/$name" ]]; then
     [[ $# -eq 0 ]] || { echo "Missing local archive: $name"; exit 1; }
-    curl -fL --retry 3 --connect-timeout 20 "https://github.com/killakazzak/k3s-ansible-vagrant-lab/releases/download/$RELEASE/$name" -o "$CACHE/$name.part"
+    "$ROOT/scripts/download.sh" "Офлайн-набор: $name" "https://github.com/killakazzak/k3s-ansible-vagrant-lab/releases/download/$RELEASE/$name" "$CACHE/$name.part"
     mv "$CACHE/$name.part" "$CACHE/$name"
   fi
 done < "$CHECKSUMS"
