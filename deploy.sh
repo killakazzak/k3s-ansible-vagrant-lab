@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+export PATH="$ROOT/.offline-venv/bin:$PATH"
 export PATH="$PATH:/opt/homebrew/bin:/opt/vagrant/bin:/usr/local/bin"
 started_at=$SECONDS
 if [[ "${1:-}" == "--help" ]]; then
@@ -17,7 +18,12 @@ fi
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || {
   echo 'This configuration requires an Apple Silicon Mac.' >&2; exit 1;
 }
-command -v brew >/dev/null || { echo 'Install Homebrew first: https://brew.sh' >&2; exit 1; }
+if [[ -d "$ROOT/vendor/offline" ]]; then
+  "$ROOT/scripts/offline-bootstrap.sh"
+  export PATH="$ROOT/.offline-venv/bin:$PATH"
+else
+  command -v brew >/dev/null || { echo 'Install Homebrew first: https://brew.sh' >&2; exit 1; }
+fi
 setting() { ruby -ryaml -e 'puts YAML.load_file(ARGV[0]).fetch(ARGV[1])' "$ROOT/ansible/group_vars/all.yml" "$1"; }
 command -v vagrant >/dev/null || "$ROOT/scripts/install-vagrant.sh"
 "$ROOT/scripts/install-ansible.sh"

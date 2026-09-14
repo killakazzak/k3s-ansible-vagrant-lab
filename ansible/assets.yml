@@ -14,7 +14,27 @@
         path: "{{ asset_cache }}"
         state: directory
         mode: '0700'
+    - name: Detect offline release bundle
+      ansible.builtin.set_fact:
+        offline_bundle: "{{ playbook_dir }}/../vendor/offline"
+        use_offline_bundle: "{{ lookup('ansible.builtin.fileglob', playbook_dir + '/../vendor/offline/manifest.json') | length > 0 }}"
+    - name: Validate offline versions
+      ansible.builtin.assert:
+        that:
+          - (lookup('file', offline_bundle + '/manifest.json') | from_json).k3s_version == k3s_version
+          - (lookup('file', offline_bundle + '/manifest.json') | from_json).rancher_version == rancher_version
+          - (lookup('file', offline_bundle + '/manifest.json') | from_json).cert_manager_version == cert_manager_version
+        fail_msg: Offline bundle versions differ from cluster configuration. Prepare a matching bundle.
+      when: use_offline_bundle | bool
+    - name: Copy k3s assets from offline bundle
+      ansible.builtin.copy:
+        src: "{{ offline_bundle }}/k3s/{{ item }}"
+        dest: "{{ asset_cache }}/{{ item }}"
+        mode: '0755'
+      loop: [k3s-arm64, install.sh]
+      when: use_offline_bundle | bool
     - name: Download ARM64 binary with release checksum
+      when: not use_offline_bundle | bool
       ansible.builtin.get_url:
         url: "{{ k3s_release_url }}/k3s-arm64"
         checksum: "sha256:{{ k3s_release_url }}/sha256sum-arm64.txt"
@@ -22,6 +42,7 @@
         mode: '0755'
         timeout: "{{ download_timeout }}"
     - name: Download installer from the same release tag
+      when: not use_offline_bundle | bool
       ansible.builtin.get_url:
         url: "{{ k3s_installer_url }}"
         dest: "{{ asset_cache }}/install.sh"

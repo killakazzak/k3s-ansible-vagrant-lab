@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+export PATH="$ROOT/.offline-venv/bin:$PATH"
 if [[ "${1:-}" == "--cluster" ]]; then
   name="${2:-}"
   [[ "$name" =~ ^[a-z][a-z0-9-]{0,30}$ && -f "$ROOT/.clusters/$name/cluster.sh" ]] || { echo 'Unknown cluster'; exit 2; }

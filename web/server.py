@@ -102,7 +102,7 @@ def cluster_names():
     return ['default'] + sorted(p.name for p in folder.iterdir() if p.is_dir() and not p.is_symlink() and re.fullmatch(r'[a-z][a-z0-9-]{0,30}', p.name)) if folder.exists() else ['default']
 
 def cluster_env(root):
-    return dict(ENV, VAGRANT_CWD=str(root), VAGRANT_DOTFILE_PATH=str(root / '.vagrant'))
+    return dict(ENV, PATH=str(root/'.offline-venv/bin')+':'+str(ROOT/'.offline-venv/bin')+':'+ENV['PATH'], VAGRANT_CWD=str(root), VAGRANT_DOTFILE_PATH=str(root / '.vagrant'))
 
 def visible_clusters():
     previous = active_root()

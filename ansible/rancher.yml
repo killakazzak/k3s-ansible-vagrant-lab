@@ -25,9 +25,7 @@
                 name: cert-manager
                 namespace: kube-system
               spec:
-                repo: {{ cert_manager_chart_repo }}
-                chart: cert-manager
-                version: {{ cert_manager_version }}
+                {{ 'chartContent: ' + (lookup('file', hostvars['localhost'].offline_bundle + '/charts/cert-manager.b64') | trim) if hostvars['localhost'].use_offline_bundle | default(false) | bool else 'repo: ' + cert_manager_chart_repo + '\n  chart: cert-manager\n  version: ' + cert_manager_version }}
                 targetNamespace: cert-manager
                 createNamespace: true
                 valuesContent: |-
@@ -60,14 +58,13 @@
                 name: rancher
                 namespace: kube-system
               spec:
-                repo: {{ rancher_chart_repo }}
-                chart: rancher
-                version: {{ rancher_version }}
+                {{ 'chartContent: ' + (lookup('file', hostvars['localhost'].offline_bundle + '/charts/rancher.b64') | trim) if hostvars['localhost'].use_offline_bundle | default(false) | bool else 'repo: ' + rancher_chart_repo + '\n  chart: rancher\n  version: ' + rancher_version }}
                 targetNamespace: cattle-system
                 createNamespace: true
                 valuesContent: |-
                   hostname: {{ rancher_hostname }}
                   replicas: {{ rancher_replicas }}
+                  useBundledSystemChart: {{ hostvars['localhost'].use_offline_bundle | default(false) | bool | to_json }}
                   ingress:
                     ingressClassName: traefik
                     tls:
