@@ -7,7 +7,8 @@ def digest(path):
  with path.open('rb') as f:
   for chunk in iter(lambda:f.read(1048576),b''):h.update(chunk)
  return h.hexdigest()
-required=['ubuntu-25gb.box','kubectl','k3s/k3s-arm64','k3s/install.sh','images/k3s-airgap-images-arm64.tar.zst','host/VirtualBox.dmg','host/python-3.13.7-macos11.pkg','charts/rancher.tgz','charts/cert-manager.tgz']
+if (bundle/'ubuntu-25gb.box').exists():raise SystemExit('Ubuntu box is excluded from this bundle; move it outside vendor/offline')
+required=['kubectl','k3s/k3s-arm64','k3s/install.sh','images/k3s-airgap-images-arm64.tar.zst','host/VirtualBox.dmg','host/python-3.13.7-macos11.pkg','charts/rancher.tgz','charts/cert-manager.tgz']
 if len(list((bundle/'host/wheels').glob('*.whl'))) < 9:raise SystemExit('Ansible wheelhouse is incomplete')
 images=(bundle/'images/list.txt').read_text().splitlines()
 required+=['images/catalog-%03d.tar'%i for i in range(len(images))]
@@ -34,7 +35,7 @@ for p in sorted(bundle.rglob('*')):
  if not p.is_file() or p.name in ('manifest.json','SHA256SUMS'):continue
  if p.is_symlink():raise SystemExit('Symlink forbidden: '+str(p))
  hashes[str(p.relative_to(bundle))]=digest(p)
-manifest=dict(platform='darwin-arm64',python_version='3.13.7',ansible_version='2.21.3',virtualbox_version='7.2.16',vagrant_version='2.4.9',box='k8s-lab/ubuntu-24.04-25gb',k3s_version='v1.36.4+k3s1',rancher_version='2.15.1',cert_manager_version='v1.21.1',images=images,sha256=hashes)
+manifest=dict(platform='darwin-arm64',box_included=False,python_version='3.13.7',ansible_version='2.21.3',virtualbox_version='7.2.16',vagrant_version='2.4.9',box='k8s-lab/ubuntu-24.04-25gb',k3s_version='v1.36.4+k3s1',rancher_version='2.15.1',cert_manager_version='v1.21.1',images=images,sha256=hashes)
 (bundle/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 hashes['manifest.json']=hashlib.sha256((bundle/'manifest.json').read_bytes()).hexdigest()
 (bundle/'SHA256SUMS').write_text(''.join(value+'  '+name+'\n' for name,value in hashes.items()))

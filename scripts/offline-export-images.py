@@ -1,5 +1,5 @@
 import pathlib,subprocess,json,shlex,sys,tarfile,shutil
-r=pathlib.Path(__file__).resolve().parents[1];out=r/'vendor/offline';sys.path.insert(0,str(r/'web'));import lab_apps,app_panels
+r=pathlib.Path(__file__).resolve().parents[1];out=r/'vendor/offline';sys.path.insert(0,str(r/'web'));import lab_apps
 import argparse,tempfile,atexit
 parser=argparse.ArgumentParser();parser.add_argument('--cluster',required=True);parser.add_argument('--master',required=True);args=parser.parse_args()
 root=pathlib.Path(args.cluster).resolve()
@@ -40,9 +40,5 @@ def export_one(pair):
 import concurrent.futures
 with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
  for result in pool.map(export_one,sorted(enumerate(images),key=lambda pair:pair[1] not in cached)):pass
-box=pathlib.Path.home()/'.vagrant.d/boxes/k8s-lab-VAGRANTSLASH-ubuntu-24.04-25gb/0/arm64/virtualbox'
-if not (out/'ubuntu-25gb.box').exists():
- with tarfile.open(out/'ubuntu-25gb.box','w:gz') as tar:
-  for p in sorted(box.iterdir()):tar.add(p,arcname=p.name)
 for name in ['k3s-arm64','install.sh']:shutil.copy2(r/'.cache/v1.36.4+k3s1'/name,out/'k3s'/name)
 shutil.copy2(r/'.tools/kubectl',out/'kubectl');shutil.copy2(r/'.tools/kubectl.sha256',out/'kubectl.sha256');print('Export complete',flush=True)

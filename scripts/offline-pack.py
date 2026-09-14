@@ -15,7 +15,7 @@ DEST.mkdir(parents=True, exist_ok=True)
 
 
 class Parts:
-    limit = 1800 * 1024 * 1024
+    limit = 256 * 1024 * 1024
 
     def __init__(self):
         self.file = None

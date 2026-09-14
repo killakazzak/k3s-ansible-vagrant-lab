@@ -1,7 +1,7 @@
 # Офлайн-комплект для macOS ARM64
 
 Комплект рассчитан на Mac Apple Silicon, VirtualBox и Ubuntu 24.04 ARM64
-с базовым диском 25 GiB. Linux, Windows и Intel Mac этим комплектом не покрываются.
+с базовым диском 25 GiB. **Образ Ubuntu исключён из комплекта.** Linux, Windows и Intel Mac этим комплектом не покрываются.
 
 ## Подготовить один раз
 
@@ -32,7 +32,7 @@
 ```
 
 Bootstrap проверяет комплект и устанавливает недостающие Python 3.13,
-Ansible из локальных wheels, Vagrant, VirtualBox и готовый Ubuntu box.
+Ansible из локальных wheels, Vagrant и VirtualBox.
 Для системных установщиков macOS запросит пароль администратора;
 после установки VirtualBox может понадобиться разрешение в настройках macOS.
 Локальное окружение Ansible находится в `.offline-venv` и создаётся заново на каждом Mac.
@@ -44,11 +44,26 @@ Homebrew для этого пути установки не требуется. 
 При несовместимой версии k3s/Rancher/cert-manager или другом провайдере
 будет ошибка с пояснением, а не автоматическое скачивание другой версии.
 
+## Ubuntu — отдельно
+
+Образ Ubuntu не входит в архивы Release. Если box уже есть в кэше Vagrant,
+он будет использован повторно. Если его нет, первый `./deploy.sh` вызовет
+`./scripts/build-box-25.sh`: этот этап требует интернета для Ubuntu ISO,
+Packer и файлов сборки. Остальные компоненты берутся из комплекта.
+
+Для полностью изолированного Mac заранее перенесите свой готовый box:
+
+```sh
+vagrant box add --name k8s-lab/ubuntu-24.04-25gb --provider virtualbox --architecture arm64 /путь/ubuntu-25gb.box
+```
+
+На исходном Mac сохранённый box находится в `.cache/offline-basebox/ubuntu-25gb.box`.
+Он не публикуется в Release и не включён в Git.
+
 ## Что входит
 
 - Vagrant 2.4.9 (уже в `vendor/vagrant`), VirtualBox 7.2.16.
 - Python 3.13.7 и Ansible Core 2.21.3 со всеми Python-зависимостями.
-- Чистый Ubuntu 24.04 ARM64 box с диском 25 GiB, без данных текущих кластеров.
 - kubectl и k3s `v1.36.4+k3s1`, установочный скрипт и системные airgap-образы.
 - Charts Rancher 2.15.1 и cert-manager v1.21.1.
 - Образы текущего каталога: Nginx 1.30.4, PostgreSQL 18.6, Redis 8.10.1,
@@ -86,6 +101,6 @@ python3 scripts/offline-verify.py vendor/offline
 python3 scripts/offline-pack.py
 ```
 
-Экспортёр сохраняет только контейнерные образы, а не диски работающих ВМ,
-Secret или kubeconfig. Чистый box берётся из локального кэша Vagrant.
+Экспортёр сохраняет только контейнерные образы, а не диски ВМ,
+Secret или kubeconfig. Ubuntu box намеренно не экспортируется.
 Не меняйте версии, оставляя старые архивы: собирайте новый каталог комплекта.

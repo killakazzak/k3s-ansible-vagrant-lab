@@ -35,6 +35,6 @@ cp "$BUNDLE/kubectl" "$ROOT/.tools/kubectl"
 chmod +x "$ROOT/.tools/kubectl"
 echo v1.36.4 > "$ROOT/.tools/kubectl.version"
 if ! vagrant box list | grep -F 'k8s-lab/ubuntu-24.04-25gb (virtualbox, 0, (arm64))' >/dev/null; then
-  vagrant box add --name k8s-lab/ubuntu-24.04-25gb --provider virtualbox --architecture arm64 "$BUNDLE/ubuntu-25gb.box"
+  echo 'Ubuntu box is not included. First deploy will build it with internet access, or import your existing box into Vagrant beforehand.'
 fi
-echo 'Offline tools and base box are ready.'
+echo 'Offline tools are ready. Ubuntu is supplied separately.'

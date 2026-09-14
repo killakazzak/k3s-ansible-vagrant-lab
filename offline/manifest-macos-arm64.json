@@ -1,5 +1,6 @@
 {
   "platform": "darwin-arm64",
+  "box_included": false,
   "python_version": "3.13.7",
   "ansible_version": "2.21.3",
   "virtualbox_version": "7.2.16",
@@ -92,7 +93,6 @@
     "k3s/k3s-arm64": "c920706346d5ad4e5cd3c7bf1bb09ce71ebe07fec829e513e40f1caf98aed8bb",
     "k3s/sha256sum-arm64.txt": "6ee9239eed8ec870f356a882758dc0a8ba06a97b3f3c0b5ba61231980e521058",
     "kubectl": "c9e4f713d6fee0043a3d835cca13077cda2bc0973840eb9779360df0b5bdfc69",
-    "kubectl.sha256": "e229b1983b3f3669aae23486b55d0b59f9e88dd5157e3bd2246f3037ad162655",
-    "ubuntu-25gb.box": "2b4573775f76cef5bbd5d3dace6d1e485c52c6dc7985d116d7be4f89d014cf00"
+    "kubectl.sha256": "e229b1983b3f3669aae23486b55d0b59f9e88dd5157e3bd2246f3037ad162655"
   }
 }
