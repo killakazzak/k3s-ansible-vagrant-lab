@@ -102,30 +102,17 @@
         path: /etc/fstab
         regexp: '^(\s*[^#\n]+\s+\S+\s+swap\s+.*)$'
         replace: '# k3s: \1'
-    - name: Create offline image import directory
-      ansible.builtin.file:
-        path: /var/lib/rancher/k3s/agent/images
-        state: directory
-        mode: '0755'
-      when: hostvars['localhost'].use_offline_bundle | default(false) | bool
-    - name: Copy offline container archives before starting k3s
-      ansible.builtin.copy:
-        src: "{{ item }}"
-        dest: "/var/lib/rancher/k3s/agent/images/{{ item | basename }}"
-        mode: '0644'
-      with_fileglob:
-        - "{{ hostvars['localhost'].offline_bundle }}/images/*.tar"
-        - "{{ hostvars['localhost'].offline_bundle }}/images/*.tar.zst"
-      when: hostvars['localhost'].use_offline_bundle | default(false) | bool
+    - name: Import local image cache
+      ansible.builtin.import_tasks: image-cache.yml
     - name: Distribute cached binary
       ansible.builtin.copy:
-        src: "{{ asset_cache }}/k3s-arm64"
+        src: "{{ hostvars['localhost'].asset_cache }}/k3s-arm64"
         dest: /usr/local/bin/k3s
         mode: '0755'
       register: k3s_binary
     - name: Distribute pinned installer
       ansible.builtin.copy:
-        src: "{{ asset_cache }}/install.sh"
+        src: "{{ hostvars['localhost'].asset_cache }}/install.sh"
         dest: /usr/local/lib/k3s/install.sh
         mode: '0644'
 
@@ -271,6 +258,7 @@
       changed_when: false
 
 - name: Join workers in parallel
+  strategy: free
   hosts: workers
   become: true
   tasks:

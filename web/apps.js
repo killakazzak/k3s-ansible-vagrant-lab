@@ -86,6 +86,8 @@ function standAction(action){
  for(const n of nodes){const label=element('label',undefined,'vm-choice');const input=document.createElement('input');input.type='checkbox';input.value=n.vagrant_id;input.onchange=update;label.append(input,document.createTextNode(`${n.name||n.vagrant_id} · ${n.vm_state||'unknown'} · ${n.cpu} CPU / ${n.ram} MiB`));$('lab-extra').append(label)}
  $('lab-extra').append(budget);update();
 }
+$('rancher-install').onclick=()=>labOpen('Установить Rancher','Установка в выбранный кластер с cert-manager. Требуется работающий API и минимум 4 ГБ RAM на master. VM сохраняются.',()=>labAction('rancher_install',{}));
+setInterval(()=>{$('rancher-install').hidden=!!state?.rancher;$('rancher-install').disabled=busy||!state?.nodes?.length},1000);
 $('stand-stop').onclick=()=>standAction('stand_stop');$('stand-start').onclick=()=>standAction('stand_start');
 let diagnosticRequest=0;
 async function showPodDiagnostics(pod){

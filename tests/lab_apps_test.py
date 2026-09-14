@@ -175,9 +175,19 @@ class LabTests(unittest.TestCase):
    root=Path(folder)
    for name in ('master','worker'):
     path=root/'.vagrant/machines'/name/'virtualbox';path.mkdir(parents=True);(path/'id').write_text('fixture')
-   for action,verb in [('stand_stop','halt'),('stand_start','up')]:
-    with patch.object(sys,'argv',['lab_action.py',str(root)]),patch.object(sys,'stdin',io.StringIO(json.dumps({'action':action,'params':{'nodes':['worker']}}))),patch.object(lab_action.subprocess,'run') as run:
-     lab_action.main();self.assertEqual(run.call_args[0][0],['vagrant',verb]+(['--no-provision'] if verb=='up' else [])+['worker'])
+   with patch.object(sys,'argv',['lab_action.py',str(root)]),patch.object(sys,'stdin',io.StringIO(json.dumps({'action':'stand_stop','params':{'nodes':['worker']}}))),patch.object(lab_action.subprocess,'run') as run:
+    lab_action.main();self.assertEqual(run.call_args[0][0],['vagrant','halt','worker'])
+   (root/'kubeconfig').touch()
+   inv={'all':{'children':{'workers':{'hosts':{'node-worker':{'vagrant_id':'worker'}}}}}}
+   for state in ('poweroff','running','not_created'):
+    with patch.object(sys,'argv',['lab_action.py',str(root)]),patch.object(sys,'stdin',io.StringIO(json.dumps({'action':'stand_start','params':{'nodes':['worker']}}))),patch.object(lab_action.subprocess,'run') as run,patch.object(lab_action.subprocess,'check_output',return_value=json.dumps(inv)),patch.object(lab.Apps,'get',return_value={'items':[{'metadata':{'name':'node-worker'},'status':{'conditions':[{'type':'Ready','status':'True'}]}}]}):
+     run.return_value.stdout='0,worker,state,'+state
+     if state=='not_created':
+      with self.assertRaisesRegex(ValueError,'удалена'):lab_action.main()
+      self.assertEqual(run.call_count,1)
+     else:
+      lab_action.main();self.assertEqual(run.call_count,2 if state=='poweroff' else 1)
+      if state=='poweroff':self.assertEqual(run.call_args.args[0],['vagrant','up','--no-provision','--parallel','worker'])
    for selected in ([],['unknown'],['--help'],'worker'):
     with patch.object(sys,'argv',['lab_action.py',str(root)]),patch.object(sys,'stdin',io.StringIO(json.dumps({'action':'stand_stop','params':{'nodes':selected}}))),patch.object(lab_action.subprocess,'run') as run:
      with self.assertRaises(ValueError):lab_action.main()

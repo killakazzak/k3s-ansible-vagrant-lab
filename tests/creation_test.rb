@@ -9,6 +9,10 @@ Dir.mktmpdir do |root|
   File.write(root+'/ansible/inventory.yml',YAML.dump(inv))
   menu=WebAction.new(root,[])
   p={'masters'=>'3','workers'=>'2','server_cpu'=>'4','server_ram'=>'8192','server_disk'=>'100','workers_cpu'=>'2','workers_ram'=>'4096','workers_disk'=>'80','network_mode'=>'new','network'=>'192.168.59.0/24'}
+  _,light=menu.creation_plan(p.merge('rancher_enabled'=>'false','server_ram'=>'1024','workers_ram'=>'1024'))
+  assert(light['rancher_enabled']==false)
+  begin menu.creation_plan(p.merge('rancher_enabled'=>'true','server_ram'=>'1024'));raise 'accepted insufficient Rancher RAM';rescue RuntimeError=>e;raise if e.message=='accepted insufficient Rancher RAM';end
+  begin menu.creation_plan(p.merge('rancher_enabled'=>'bogus'));raise 'accepted invalid component';rescue RuntimeError=>e;raise if e.message=='accepted invalid component';end
   small_disk,_=menu.creation_plan(p.merge('server_disk'=>'25','workers_disk'=>'25'))
   assert(small_disk['all']['children']['server']['hosts'].values.first['vm_disk_gb']==25)
   begin menu.creation_plan(p.merge('server_disk'=>'24'));raise 'accepted disk below minimum';rescue RuntimeError=>e;raise if e.message=='accepted disk below minimum';end

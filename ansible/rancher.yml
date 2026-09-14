@@ -25,7 +25,7 @@
                 name: cert-manager
                 namespace: kube-system
               spec:
-                {{ 'chartContent: ' + (lookup('file', hostvars['localhost'].offline_bundle + '/charts/cert-manager.b64') | trim) if hostvars['localhost'].use_offline_bundle | default(false) | bool else 'repo: ' + cert_manager_chart_repo + '\n  chart: cert-manager\n  version: ' + cert_manager_version }}
+                chartContent: {{ hostvars['localhost'].cert_manager_chart_content }}
                 targetNamespace: cert-manager
                 createNamespace: true
                 valuesContent: |-
@@ -58,7 +58,7 @@
                 name: rancher
                 namespace: kube-system
               spec:
-                {{ 'chartContent: ' + (lookup('file', hostvars['localhost'].offline_bundle + '/charts/rancher.b64') | trim) if hostvars['localhost'].use_offline_bundle | default(false) | bool else 'repo: ' + rancher_chart_repo + '\n  chart: rancher\n  version: ' + rancher_version }}
+                chartContent: {{ hostvars['localhost'].rancher_chart_content }}
                 targetNamespace: cattle-system
                 createNamespace: true
                 valuesContent: |-

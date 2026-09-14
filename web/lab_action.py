@@ -5,7 +5,9 @@ from lab_apps import Apps, validate, namespace, templates
 
 def main():
     root=Path(sys.argv[1]);data=json.load(sys.stdin) if len(sys.argv)<3 else {'action':sys.argv[2],'params':{}};action=data['action'];params=data.get('params',{});apps=Apps(root)
-    if action in ('stand_stop','stand_start'):
+    if action=='rancher_install':
+        subprocess.run(['bash',str(root/'scripts/install-rancher.sh')],cwd=root,check=True)
+    elif action in ('stand_stop','stand_start'):
         print('TASK ['+('Остановка VM с сохранением дисков' if action=='stand_stop' else 'Запуск сохранённых VM')+']',flush=True)
         ids=list((root/'.vagrant/machines').glob('*/*/id'))
         if not ids:raise ValueError('Сохранённые VM не найдены. Сначала создайте кластер.')
@@ -13,8 +15,34 @@ def main():
         selected=params.get('nodes',targets)
         if not isinstance(selected,list) or not selected or any(not isinstance(n,str) or n not in targets for n in selected):raise ValueError('Выберите существующие VM этого кластера')
         targets=sorted(set(selected))
-        subprocess.run((['vagrant','halt'] if action=='stand_stop' else ['vagrant','up','--no-provision'])+targets,cwd=root,check=True,timeout=600)
-        if action=='stand_start':print('Выбранные VM запущены. Готовность Kubernetes смотрите в статусе: API требует работающего control plane.',flush=True)
+        if action=='stand_start':
+            result=subprocess.run(['vagrant','status','--machine-readable']+targets,cwd=root,check=True,capture_output=True,text=True,timeout=60)
+            states={}
+            for line in result.stdout.splitlines():
+                fields=line.split(',')
+                if len(fields)>=4 and fields[2]=='state':states[fields[1]]=fields[3]
+            if any(states.get(n) not in ('running','poweroff','saved','aborted') for n in targets):
+                raise ValueError('Часть VM удалена или её состояние неизвестно. Возобновление не создаёт новые VM; проверьте состояние стенда.')
+            pending=[n for n in targets if states[n]!='running']
+            if pending:subprocess.run(['vagrant','up','--no-provision','--parallel']+pending,cwd=root,check=True,timeout=600)
+            print('TASK [Ожидание Ready возобновлённых узлов]',flush=True)
+            inventory=json.loads(subprocess.check_output(['ruby','-ryaml','-rjson','-e',"puts JSON.generate(YAML.load_file('ansible/inventory.yml'))"],cwd=root,text=True))
+            names=[name for group in inventory['all']['children'].values() for name,host in group['hosts'].items() if host['vagrant_id'] in targets]
+            if len(names)!=len(targets):raise ValueError('VM не совпадают с inventory. Проверьте конфигурацию.')
+            if not (root/'kubeconfig').exists():raise ValueError('VM включены, но kubeconfig отсутствует. Выполните создание / применение конфигурации.')
+            import time
+            deadline=time.monotonic()+180
+            while True:
+                try:
+                    status=apps.get('nodes')
+                    ready={n['metadata']['name'] for n in status.get('items',[]) if any(c.get('type')=='Ready' and c.get('status')=='True' for c in n.get('status',{}).get('conditions',[]))}
+                    if set(names)<=ready:break
+                except (ValueError,subprocess.SubprocessError):pass
+                if time.monotonic()>=deadline:raise ValueError('VM включены, но узлы не стали Ready за 180 секунд. Проверьте master, API и сеть.')
+                time.sleep(3)
+            print('Стенд возобновлён: выбранные узлы Ready. Данные сохранены, Ansible не запускался.',flush=True)
+        else:
+            subprocess.run(['vagrant','halt']+targets,cwd=root,check=True,timeout=600)
     elif action in ('app_deploy','template_deploy'):
         configs=params.get('apps',[])
         if action=='template_deploy':

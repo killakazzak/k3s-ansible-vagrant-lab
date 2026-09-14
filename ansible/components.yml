@@ -1,0 +1,21 @@
+---
+- name: Check existing control plane before installing Rancher
+  hosts: "{{ groups['server'][0] }}"
+  become: true
+  tasks:
+    - name: Check memory for Rancher
+      ansible.builtin.assert:
+        that: ansible_facts.memtotal_mb | int >= 3500
+        fail_msg: Increase master RAM to at least 4096 MB before installing Rancher.
+    - name: Check API before changing components
+      ansible.builtin.command: k3s kubectl get --raw=/readyz
+      changed_when: false
+- import_playbook: assets.yml
+- name: Load cached images on existing nodes
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - ansible.builtin.import_tasks: image-cache.yml
+- import_playbook: rancher.yml
+- import_playbook: access.yml

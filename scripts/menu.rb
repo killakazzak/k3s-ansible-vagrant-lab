@@ -49,7 +49,7 @@ class ClusterMenu
     data = inventory
     if hosts(data, 'server').empty?
       cfg = settings
-      params = {'masters'=>count('Сколько master',1,7),'workers'=>count('Сколько workers',2,32),'network_mode'=>'existing'}
+      params = {'rancher_enabled'=>count('Компоненты: 1 — Kubernetes + Traefik, 2 — также Rancher',1,2)==2,'masters'=>count('Сколько master',1,7),'workers'=>count('Сколько workers',2,32),'network_mode'=>'existing'}
       %w[server workers].each do |role|
         params[role+'_cpu'] = cfg['vm_cpus'][role]
         params[role+'_ram'] = cfg['vm_memory_mb'][role]
@@ -58,6 +58,7 @@ class ClusterMenu
       return unless confirm('Создать новый кластер с указанным числом узлов и ресурсами по умолчанию?')
       return create_with_resources(params)
     end
+    component_rancher = Dir.glob(File.join(@root,'.vagrant/machines/*/*/id')).empty? ? count('Компоненты: 1 — Kubernetes + Traefik, 2 — также Rancher',1,2)==2 : settings['rancher_enabled']
     masters = count('Сколько master', hosts(data, 'server').length, 7)
     workers = count('Сколько workers', hosts(data, 'workers').length, 32)
     raise 'Для нескольких master включите k3s_embedded_etcd' if masters > 1 && !settings['k3s_embedded_etcd']
@@ -93,6 +94,7 @@ class ClusterMenu
     puts "Итого: #{masters} master, #{workers} workers, #{total_ram} MB RAM для VM."
     data['all']['children'].each_value { |g| g['hosts'].each { |name, h| puts "  #{name}: #{h['ansible_host']}" } }
     return unless confirm('Создать / применить этот состав кластера?')
+    set_values('rancher_enabled'=>component_rancher)
     write(@inventory, YAML.dump(data)) if changed
     run('./cluster.sh', 'up', '--verify')
   end
@@ -389,7 +391,7 @@ class ClusterMenu
     show_web_link
     loop do
       show
-      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Запустить веб-сервер / показать ссылку\n13. Список кластеров\n14. Подключиться через kubectl\n15. Остановить веб-сервер\n16. Остановить VM стенда (сохранить данные)\n17. Возобновить VM стенда\n0. Выход"
+      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Запустить веб-сервер / показать ссылку\n13. Список кластеров\n14. Подключиться через kubectl\n15. Остановить веб-сервер\n16. Остановить VM стенда (сохранить данные)\n17. Возобновить VM стенда\n18. Установить Rancher\n0. Выход"
       begin
         case ask('Выбери номер')
         when '1' then create_cluster
@@ -412,6 +414,7 @@ class ClusterMenu
         when '15' then run(File.join(cluster_profiles.first.last, 'cluster.sh'), 'web-stop')
         when '16' then run('./cluster.sh', 'stand-stop') if confirm('Штатно выключить VM этого стенда? Диски и данные сохранятся.')
         when '17' then run('./cluster.sh', 'stand-start')
+        when '18' then run('./cluster.sh', 'rancher-install')
         when '0' then break
         else puts 'Выбери номер из меню.'
         end

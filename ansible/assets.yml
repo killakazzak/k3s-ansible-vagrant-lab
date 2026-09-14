@@ -9,6 +9,9 @@
     ansible_ssh_private_key_file: ""
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
+    - name: Select shared versioned cache
+      ansible.builtin.set_fact:
+        asset_cache: "{{ lookup('env', 'K3S_LAB_CACHE_ROOT') | default(playbook_dir + '/../.cache', true) }}/{{ k3s_version }}"
     - name: Create local cache
       ansible.builtin.file:
         path: "{{ asset_cache }}"
@@ -22,8 +25,8 @@
       ansible.builtin.assert:
         that:
           - (lookup('file', offline_bundle + '/manifest.json') | from_json).k3s_version == k3s_version
-          - (lookup('file', offline_bundle + '/manifest.json') | from_json).rancher_version == rancher_version
-          - (lookup('file', offline_bundle + '/manifest.json') | from_json).cert_manager_version == cert_manager_version
+          - not rancher_enabled | bool or (lookup('file', offline_bundle + '/manifest.json') | from_json).rancher_version == rancher_version
+          - not rancher_enabled | bool or (lookup('file', offline_bundle + '/manifest.json') | from_json).cert_manager_version == cert_manager_version
         fail_msg: Offline bundle versions differ from cluster configuration. Prepare a matching bundle.
       when: use_offline_bundle | bool
     - name: Copy k3s assets from offline bundle
@@ -48,3 +51,37 @@
         dest: "{{ asset_cache }}/install.sh"
         mode: '0644'
         timeout: "{{ download_timeout }}"
+    - name: Cache core container images once per k3s release
+      ansible.builtin.get_url:
+        url: "{{ k3s_release_url }}/k3s-airgap-images-arm64.tar.zst"
+        checksum: "sha256:{{ k3s_release_url }}/sha256sum-arm64.txt"
+        dest: "{{ asset_cache }}/k3s-airgap-images-arm64.tar.zst"
+        timeout: "{{ download_timeout }}"
+        mode: '0644'
+      when: not use_offline_bundle | bool
+    - name: Select container archives for chosen components
+      ansible.builtin.set_fact:
+        cached_image_archives: "{{ ([offline_bundle + '/images/k3s-airgap-images-arm64.tar.zst'] + (lookup('fileglob', offline_bundle + '/images/*.tar', wantlist=True) if rancher_enabled | bool else [])) if use_offline_bundle | bool else [asset_cache + '/k3s-airgap-images-arm64.tar.zst'] }}"
+    - name: Cache Helm charts for selected Rancher version
+      when: rancher_enabled | bool and not use_offline_bundle | bool
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "{{ asset_cache }}/{{ item.name }}-{{ item.version }}.tgz"
+        mode: '0644'
+        timeout: "{{ download_timeout }}"
+      loop:
+        - {name: rancher, version: "{{ rancher_version }}", url: "{{ rancher_chart_repo }}/rancher-{{ rancher_version }}.tgz"}
+        - {name: cert-manager, version: "{{ cert_manager_version }}", url: "{{ cert_manager_chart_repo }}/charts/cert-manager-{{ cert_manager_version }}.tgz"}
+    - name: Read cached Helm charts
+      when: rancher_enabled | bool and not use_offline_bundle | bool
+      ansible.builtin.slurp:
+        src: "{{ asset_cache }}/{{ item.name }}-{{ item.version }}.tgz"
+      loop:
+        - {name: rancher, version: "{{ rancher_version }}"}
+        - {name: cert-manager, version: "{{ cert_manager_version }}"}
+      register: cached_charts
+    - name: Make local charts available to Helm controller
+      when: rancher_enabled | bool
+      ansible.builtin.set_fact:
+        rancher_chart_content: "{{ (lookup('file', offline_bundle + '/charts/rancher.b64') | trim) if use_offline_bundle | bool else cached_charts.results[0].content }}"
+        cert_manager_chart_content: "{{ (lookup('file', offline_bundle + '/charts/cert-manager.b64') | trim) if use_offline_bundle | bool else cached_charts.results[1].content }}"

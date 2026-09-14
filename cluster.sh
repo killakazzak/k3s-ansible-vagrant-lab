@@ -50,6 +50,7 @@ case "$command_name" in
     if [[ "$(basename "$(dirname "$ROOT")")" == ".clusters" ]]; then lab_base="$(dirname "$(dirname "$ROOT")")"; fi
     exec python3 "$lab_base/web/lab_action.py" "$ROOT" "${command_name//-/_}"
     ;;
+  rancher-install) exec "$ROOT/scripts/install-rancher.sh" "$@" ;;
   up) exec "$ROOT/deploy.sh" "$@" ;;
   destroy|status|verify)
     [[ $# -eq 0 ]] || { usage >&2; exit 2; }

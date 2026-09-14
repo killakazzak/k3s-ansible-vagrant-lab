@@ -6,6 +6,11 @@ cd "$ROOT"
 export PATH="$ROOT/.offline-venv/bin:$PATH"
 export PATH="$PATH:/opt/homebrew/bin:/opt/vagrant/bin:/usr/local/bin"
 started_at=$SECONDS
+lab_base="$ROOT"
+if [[ "$(basename "$(dirname "$ROOT")")" == .clusters ]]; then lab_base="$(dirname "$(dirname "$ROOT")")"; fi
+export K3S_LAB_CACHE_ROOT="${K3S_LAB_CACHE_ROOT:-$lab_base/.cache/assets}"
+export ANSIBLE_FORKS="${ANSIBLE_FORKS:-8}"
+[[ "$ANSIBLE_FORKS" =~ ^[1-9][0-9]*$ ]] && (( ANSIBLE_FORKS <= 32 )) || { echo 'ANSIBLE_FORKS must be 1–32'; exit 2; }
 if [[ "${1:-}" == "--help" ]]; then
   echo 'Usage: ./deploy.sh [--verify]'
   echo 'Requires Apple Silicon, Homebrew and VirtualBox 7.2 or newer.'
@@ -66,7 +71,10 @@ mkdir -p .cache
 ansible-playbook ansible/assets.yml > .cache/assets.log 2>&1 &
 assets_pid=$!
 trap 'kill "$assets_pid" 2>/dev/null || true' EXIT
-vagrant up --provider="$(setting vm_provider)" --no-provision
+if [[ "$(setting vm_provider)" == virtualbox ]]; then
+  echo "VirtualBox создаёт VM последовательно; Ansible подготавливает до $ANSIBLE_FORKS узлов одновременно."
+fi
+vagrant up --provider="$(setting vm_provider)" --no-provision --parallel
 if ! wait "$assets_pid"; then
   cat .cache/assets.log >&2
   exit 1

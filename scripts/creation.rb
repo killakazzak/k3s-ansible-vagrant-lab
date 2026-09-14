@@ -43,6 +43,9 @@ module Creation
   def creation_plan(params)
     cfg = settings
     old = inventory
+    rancher = params.fetch('rancher_enabled', cfg['rancher_enabled'])
+    raise 'Неверный выбор Rancher' unless [true, false, 'true', 'false'].include?(rancher)
+    rancher = [true, 'true'].include?(rancher)
     int = lambda do |key, min, max|
       value = params.fetch(key).to_s
       raise "#{key}: целое число #{min}–#{max}" unless value.match?(/\A[0-9]+\z/) && (min..max).cover?(value.to_i)
@@ -54,7 +57,7 @@ module Creation
     cpu = {}; ram = {}; disk = {}
     %w[server workers].each do |role|
       cpu[role] = int.call("#{role}_cpu", 1, 32)
-      ram[role] = int.call("#{role}_ram", cfg['rancher_enabled'] ? 4096 : 1024, 65536)
+      ram[role] = int.call("#{role}_ram", rancher ? 4096 : 1024, 65536)
       disk[role] = int.call("#{role}_disk", 25, 2048)
     end
     raise 'Диск больше 25 ГБ поддерживается только с VirtualBox' if cfg['vm_provider'] != 'virtualbox' && disk.values.any? { |v| v > 25 }
@@ -82,6 +85,7 @@ module Creation
         unchanged &&= g['hosts'].values.all? { |h| h.fetch('vm_cpus',cfg['vm_cpus'][role]) == cpu[role] && h.fetch('vm_memory_mb',cfg['vm_memory_mb'][role]) == ram[role] && h.fetch('vm_disk_gb',cfg.fetch('vm_disk_gb',{}).fetch(role,25)) == disk[role] }
       end
       raise 'В выбранном кластере уже есть VM. Для второго кластера нажмите «Новый кластер» и задайте отдельную подсеть. CPU/ОЗУ текущих узлов меняйте через «Настроить», состав — через добавление и удаление узлов. Для смены сети или диска требуется пересоздание выбранного кластера.' unless unchanged
+      raise 'Выбор компонентов существующего кластера меняйте отдельной командой установки Rancher' if rancher != cfg['rancher_enabled']
       return [old, {}]
     end
     name_prefix = node_prefix
@@ -94,7 +98,7 @@ module Creation
         generated['all']['children'][role]['hosts'][name] = {'ansible_host'=>IPAddr.new(network.to_i+start+i,Socket::AF_INET).to_s,'vagrant_id'=>name,'vm_cpus'=>cpu[role],'vm_memory_mb'=>ram[role],'vm_disk_gb'=>disk[role]}
       end
     end
-    [generated, {'vm_cpus'=>cpu,'vm_memory_mb'=>ram,'vm_disk_gb'=>disk,'private_network_prefix'=>prefix}]
+    [generated, {'rancher_enabled'=>rancher,'vm_cpus'=>cpu,'vm_memory_mb'=>ram,'vm_disk_gb'=>disk,'private_network_prefix'=>prefix}]
   end
 
   def create_with_resources(params)
