@@ -134,7 +134,7 @@ class ClusterMenu
   def show
     cfg = settings
     if inventory['all']['children'].values.all? { |g| g['hosts'].empty? }
-      puts "\nКластер пуст. Inventory не содержит узлов. Для создания выберите пункт 1."
+      puts "\nКластер пуст. Inventory не содержит узлов. Для создания выберите пункт 4."
       return
     end
     begin
@@ -331,7 +331,7 @@ class ClusterMenu
       end
     end
     if profiles.empty?
-      puts 'Нет кластеров. Для создания выберите пункт 1.'
+      puts 'Нет кластеров. Для создания выберите пункт 4.'
       return profiles
     end
     puts "\nКластеры — сохранённые профили (наличие kubeconfig не означает доступность API):"
@@ -387,13 +387,63 @@ class ClusterMenu
     puts "Веб-консоль: запустите #{Shellwords.escape(File.join(base, 'cluster.sh'))} web, чтобы получить актуальную ссылку."
   end
 
+  MENU_GROUPS = [
+    ['БЫСТРЫЙ ДОСТУП', [
+      ['Открыть веб-консоль', '12'],
+      ['Список кластеров', '13'],
+      ['Подключение через kubectl', '14']]],
+    ['КЛАСТЕР', [
+      ['Создать / применить конфигурацию', '1'],
+      ['Состояние VM и узлов', '3'],
+      ['Проверить сеть и Traefik', '4'],
+      ['Удалить кластер', '2']]],
+    ['УЗЛЫ И РЕСУРСЫ', [
+      ['Добавить master', '9'],
+      ['Удалить master', '10'],
+      ['Добавить worker', '5'],
+      ['Удалить worker', '6'],
+      ['Изменить CPU / RAM узла', '7'],
+      ['Изменить версию k3s', '8']]],
+    ['СТЕНД И КОМПОНЕНТЫ', [
+      ['Остановить VM · сохранить данные', '16'],
+      ['Возобновить VM стенда', '17'],
+      ['Ссылки на Rancher и Traefik', '11'],
+      ['Установить Rancher', '18'],
+      ['Остановить веб-сервер', '15']]]
+  ].freeze
+
+  def menu_action(number)
+    return '0' if number == '0'
+    return nil unless number.match?(/\A[1-9]\d*\z/)
+    MENU_GROUPS.flat_map(&:last)[number.to_i - 1]&.last
+  end
+
+  def print_menu
+    width = 48
+    puts "\n  K3s Lab · Управление стендом"
+    puts "  ┌────┬#{'─' * width}┐"
+    index = 0
+    MENU_GROUPS.each_with_index do |(title, entries), group|
+      puts "  ├────┼#{'─' * width}┤" if group > 0
+      puts "  │    │ #{title.ljust(width - 2)} │"
+      entries.each do |label, _|
+        index += 1
+        puts "  │ #{index.to_s.rjust(2)} │ #{label.ljust(width - 2)} │"
+      end
+    end
+    puts "  ├────┼#{'─' * width}┤"
+    puts "  │  0 │ #{'Выход из меню'.ljust(width - 2)} │"
+    puts "  └────┴#{'─' * width}┘"
+    puts "  1 — открыть браузер и показать ссылку.\n\n"
+  end
+
   def start
     show_web_link unless ENV.delete('K3S_LAB_WEB_LINK_SHOWN') == '1'
     loop do
       show
-      puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Запустить веб-сервер / показать ссылку\n13. Список кластеров\n14. Подключиться через kubectl\n15. Остановить веб-сервер\n16. Остановить VM стенда (сохранить данные)\n17. Возобновить VM стенда\n18. Установить Rancher\n0. Выход"
+      print_menu
       begin
-        case ask('Выбери номер')
+        case menu_action(ask('  Номер действия'))
         when '1' then create_cluster
         when '2'
           run('./cluster.sh', 'destroy') if confirm('Удалить все VM этого кластера вместе с данными?')
