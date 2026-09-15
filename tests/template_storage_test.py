@@ -73,3 +73,10 @@ class TemplateStorageTests(unittest.TestCase):
   result=storage.editor_storage(app,dict(namespace='dev'));claims={p['name']:p for p in result['pvcs']}
   self.assertTrue(claims['data-db-0']['available']);self.assertEqual(claims['data-db-0']['secret'],'db-auth')
   self.assertFalse(claims['busy']['available']);self.assertNotIn('PRIVATE',str(result));app.apply.assert_not_called()
+
+ def test_numbered_hostname_does_not_overlap_sslip_address(self):
+  app=lab.Apps('/tmp');nodes={'items':[dict(metadata=dict(labels={'node-role.kubernetes.io/control-plane':'true'}),status=dict(addresses=[dict(type='InternalIP',address='192.168.60.11')]))]}
+  with patch.object(app,'get',return_value=nodes):
+   self.assertEqual(app.host({'host':'web-1'}),'web-1.app.192.168.60.11.sslip.io')
+   self.assertEqual(app.host({'host':'web'}),'web.192.168.60.11.sslip.io')
+   self.assertEqual(app.host({'host':'custom.example.com'}),'custom.example.com')

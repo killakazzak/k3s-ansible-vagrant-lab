@@ -444,7 +444,7 @@ class Apps:
         nodes=self.get('nodes')['items']
         master=next((n for n in nodes if 'node-role.kubernetes.io/control-plane' in n['metadata'].get('labels',{})),nodes[0])
         ip=next(a['address'] for a in master['status']['addresses'] if a['type']=='InternalIP')
-        return config['host']+'.'+ip+'.sslip.io'
+        return config['host']+('.app.' if config['host'][-1].isdigit() else '.')+ip+'.sslip.io'
     def plan(self,config):
         c=validate(config);ns=c['namespace'];name=c['name'];kind='StatefulSet' if c['type'] in STATEFUL else 'Deployment'
         labels={'app.kubernetes.io/managed-by':MANAGER,'app.kubernetes.io/name':name,'lab.k3s/type':c['type']}
