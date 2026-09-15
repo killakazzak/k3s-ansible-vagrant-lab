@@ -161,14 +161,40 @@ $('rancher-install').onclick=()=>labOpen('Установить Rancher','Уст�
 setInterval(()=>{$('rancher-install-row').hidden=!state||!!state.rancher;document.querySelector('[data-credentials="rancher"]').hidden=!state?.rancher;$('rancher-install').disabled=busy||!state?.nodes?.length},1000);
 $('stand-stop').onclick=()=>standAction('stand_stop');$('stand-start').onclick=()=>standAction('stand_start');
 let diagnosticRequest=0;
+async function openPodTerminal(pod,container){
+ if($('lab-dialog').open)await new Promise(resolve=>{ $('lab-dialog').addEventListener('close',resolve,{once:true});$('lab-dialog').close()});
+ await openPodDebug(pod,{mode:'shell',container,autoConnect:true});
+}
 async function showPodDiagnostics(pod){
- labOpen('Диагностика · '+pod.name,'Кластер '+selectedCluster+' · '+pod.namespace,null);
+ labOpen('Диагностика Pod',pod.namespace+' / '+pod.name,null);
+ const dialog=$('lab-dialog');dialog.classList.add('diagnostics-dialog');$('lab-cancel').textContent='Закрыть';
+ const expand=resourceButton('⛶ Развернуть',()=>{const full=dialog.classList.toggle('diagnostics-expanded');expand.textContent=full?'↙ Свернуть':'⛶ Развернуть';expand.setAttribute('aria-pressed',String(full))},'button secondary diagnostic-expand');expand.setAttribute('aria-pressed','false');$('lab-close').before(expand);
+ dialog.addEventListener('close',()=>{dialog.classList.remove('diagnostics-dialog','diagnostics-expanded');expand.remove()},{once:true});
  const selector=labField('container','Контейнер','','text',[]);const previous=labField('previous','Логи','false','text',[{value:'false',label:'Текущий запуск'},{value:'true',label:'Предыдущий запуск'}]);
- const statusBox=element('pre','Получаем состояние…','diagnostic-output');const logs=element('pre','','diagnostic-output');$('lab-extra').append(statusBox,element('h3','Логи'),logs);
- const load=async()=>{const request=++diagnosticRequest;try{sameCluster();const result=await api('pod',{namespace:pod.namespace,name:pod.name,container:selector.value||undefined,previous:previous.value==='true'});if(request!==diagnosticRequest||!$('lab-dialog').open||labCluster!==selectedCluster)return;selector.replaceChildren();for(const c of result.containers){const o=element('option',c);o.value=c;selector.append(o)}selector.value=result.container;statusBox.textContent=`${result.phase} · узел ${result.node||'не назначен'}\n\n`+result.statuses.map(c=>`${c.name}: Ready=${c.ready}, рестарты=${c.restarts}\n${JSON.stringify(c.state,null,2)}\nПредыдущее состояние: ${JSON.stringify(c.lastState)}`).join('\n')+'\n\nУсловия\n'+result.conditions.map(c=>`${c.type}: ${c.status} ${c.reason} ${c.message}`).join('\n')+'\n\nСобытия\n'+result.events.map(e=>`${e.time||''} ${e.reason} (×${e.count}): ${e.message}`).join('\n');logs.textContent=result.logs||'Логов пока нет.'}catch(e){labError(e)}};
- selector.onchange=previous.onchange=load;
- const refresh=element('button','Обновить диагностику','button secondary');refresh.type='button';refresh.onclick=load;$('lab-extra').append(refresh);
- const exec=element('button','Терминал контейнера','button primary');exec.type='button';exec.onclick=async()=>{try{sameCluster();const container=selector.value;if(!container)throw Error('Выберите контейнер');const cluster=selectedCluster;$('lab-dialog').close();if(!shellSessions.has(cluster))await $('shell-open').onclick();const session=shellSessions.get(cluster);if(!session)throw Error('Терминал не открылся');const quote=s=>"'"+s.replace(/'/g,"'\\''")+"'";await session.queue;await terminalApi(cluster,{operation:'input',id:session.id,input:'\x03'});await terminalApi(cluster,{operation:'input',id:session.id,input:`kubectl exec -it -n ${quote(pod.namespace)} ${quote(pod.name)} -c ${quote(container)} -- sh\r`});session.term.focus();session.element.scrollIntoView({behavior:'smooth',block:'center'});}catch(e){error(e.message)}};$('lab-extra').append(exec);load();
+ const actions=element('div',undefined,'diagnostic-actions'),tabs=element('div',undefined,'diagnostic-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','Диагностика Pod');
+ const body=element('div',undefined,'diagnostic-panel');body.id='pod-diagnostic-panel';body.setAttribute('role','tabpanel');body.tabIndex=0;
+ let data=null,tab='state',query='';const message=element('span','Получаем состояние…','diagnostic-summary');
+ const render=()=>{
+  for(const button of tabs.children){const active=button.dataset.tab===tab;button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;if(active)body.setAttribute('aria-labelledby',button.id)}
+  previous.parentElement.hidden=tab!=='logs';body.replaceChildren();if(!data){body.append(element('p','Получаем состояние…','lab-note'));return}
+  if(tab==='state'){
+   const summary=element('div',undefined,'diagnostic-overview');summary.append(element('strong',data.phase||'Unknown'),element('span','Узел: '+(data.node||'Не назначен')));body.append(summary);
+   const conditions=element('div',undefined,'diagnostic-conditions');for(const c of data.conditions||[]){const card=element('div',undefined,'diagnostic-condition '+(c.status==='True'?'good':'warn'));card.append(element('strong',c.type),element('span',c.status==='True'?'✓ Да':c.status==='False'?'Нет':'Неизвестно'));if(c.reason||c.message)card.append(element('small',[c.reason,c.message].filter(Boolean).join(' · ')));conditions.append(card)}body.append(conditions);
+   for(const c of data.statuses||[]){const card=element('article',undefined,'diagnostic-container-card');card.append(element('strong',c.name),element('span',(c.ready?'Ready':'Не готов')+' · рестарты: '+c.restarts));const reason=c.state?.waiting?.reason||c.state?.terminated?.reason;if(reason)card.append(element('p',reason,'error'));const detail=document.createElement('details');detail.append(element('summary','Техническое состояние'),element('pre',JSON.stringify({state:c.state,previous:c.lastState},null,2),'diagnostic-json'));card.append(detail);body.append(card)}
+  }else if(tab==='events'){
+   if(!(data.events||[]).length)body.append(element('p','Событий пока нет.','lab-note'));
+   for(const event of data.events||[]){const warning=event.type==='Warning'||/Unhealthy|Failed|BackOff|Evict/i.test(event.reason||'');const card=element('article',undefined,'diagnostic-event '+(warning?'warning':''));const heading=element('div');heading.append(element('strong',event.reason||'Событие'),element('small','×'+(event.count||1)+' · '+(event.time||'Время не указано')));card.append(heading,element('p',event.message||''));body.append(card)}
+  }else{
+   const input=document.createElement('input');input.type='search';input.placeholder='Фильтр строк логов…';input.setAttribute('aria-label','Фильтр логов диагностики');input.value=query;
+   const output=element('pre','','diagnostic-log');const update=()=>{query=input.value;output.textContent=debugLogLines(data.logs||'',query).join('\n')||(query?'Совпадений нет.':'Логов пока нет.')};input.oninput=update;update();body.append(input,output);
+  }
+ };
+ for(const [key,label] of [['state','Состояние'],['events','События'],['logs','Логи']]){const button=resourceButton(label,()=>{tab=key;render()},'diagnostic-tab');button.dataset.tab=key;button.id='diagnostic-tab-'+key;button.setAttribute('role','tab');button.setAttribute('aria-controls',body.id);button.onkeydown=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const list=[...tabs.children],index=list.indexOf(button),next=e.key==='Home'?0:e.key==='End'?list.length-1:(index+(e.key==='ArrowRight'?1:list.length-1))%list.length;list[next].click();list[next].focus()};tabs.append(button)}
+ const load=async()=>{const request=++diagnosticRequest;message.textContent='Обновление…';refresh.disabled=true;try{sameCluster();const result=await api('pod',{namespace:pod.namespace,name:pod.name,container:selector.value||undefined,previous:previous.value==='true'});if(request!==diagnosticRequest||!body.isConnected||labCluster!==selectedCluster)return;data=result;selector.replaceChildren();for(const c of result.containers||[]){const option=element('option',c);option.value=c;selector.append(option)}selector.value=result.container;terminal.disabled=!selector.value;message.textContent=(result.phase||'Unknown')+' · '+(result.node||'Узел не назначен');render()}catch(e){if(request===diagnosticRequest&&body.isConnected){message.textContent='Не удалось обновить';labError(e)}}finally{if(body.isConnected)refresh.disabled=false}};
+ const refresh=resourceButton('↻ Обновить',load,'button secondary');
+ const terminal=resourceButton('>_ Терминал',()=>openPodTerminal(pod,selector.value).catch(labError),'button primary');terminal.disabled=true;
+ const live=resourceButton('Онлайн-логи',async()=>{await new Promise(resolve=>{dialog.addEventListener('close',resolve,{once:true});dialog.close()});await openPodDebug(pod)},'button secondary');
+ actions.append(terminal,live,refresh,message);$('lab-extra').append(actions,tabs,body);selector.onchange=previous.onchange=load;render();load();
 }
 $('lab-dialog').addEventListener('close',()=>{diagnosticRequest++});
 window.addEventListener('lab-pod',event=>showPodDiagnostics(event.detail));
@@ -277,11 +303,11 @@ async function closePodDebug(){const s=podDebugSession;podDebugSession=null;if(!
 $('lab-dialog').addEventListener('close',()=>{closePodDebug();const d=$('lab-dialog');d.classList.remove('debug-dialog','debug-expanded');d.style.removeProperty('width');d.style.removeProperty('height');d.querySelector('.debug-expand')?.remove();$('lab-cancel').textContent='Отмена'});
 $('cluster-select').addEventListener('change',()=>{if(podDebugSession){closePodDebug();$('lab-dialog').close()}});
 function debugLogLines(text,query){if(!text)return [];const q=query.trim().toLowerCase();return text.split('\n').filter(line=>!q||line.toLowerCase().includes(q));}
-async function openPodDebug(pod){
+async function openPodDebug(pod,options={}){
  await closePodDebug();labOpen('Онлайн-дебаг',pod.namespace+' / '+pod.name,null);
  const dialog=$('lab-dialog');dialog.classList.add('debug-dialog');$('lab-cancel').textContent='Закрыть';
  const expand=resourceButton('⛶ Развернуть',()=>{const full=dialog.classList.toggle('debug-expanded');expand.textContent=full?'↙ Свернуть':'⛶ Развернуть';expand.setAttribute('aria-pressed',String(full))},'button secondary debug-expand');expand.setAttribute('aria-pressed','false');$('lab-close').before(expand);
- const container=labField('debug-container','Контейнер','','text',[]);const mode=labField('debug-mode','Режим','logs','text',[{value:'logs',label:'Онлайн-логи'},{value:'shell',label:'Терминал'}]);const shell=labField('debug-shell','Shell','sh','text',['sh','bash']);
+ const container=labField('debug-container','Контейнер','','text',[]);const mode=labField('debug-mode','Режим',options.mode||'logs','text',[{value:'logs',label:'Онлайн-логи'},{value:'shell',label:'Терминал'}]);const shell=labField('debug-shell','Shell','sh','text',['sh','bash']);
  const status=element('p','Загрузка контейнеров…','debug-status');status.setAttribute('role','status');
  const host=element('div',undefined,'pod-debug-terminal');const logOutput=element('pre','','debug-log-output');logOutput.tabIndex=0;logOutput.setAttribute('aria-label','Логи контейнера');host.append(logOutput);
  const controls=element('div',undefined,'debug-connect-controls');const toolbar=element('div',undefined,'debug-log-toolbar');
@@ -316,5 +342,5 @@ async function openPodDebug(pod){
  const updateMode=()=>{const logs=mode.value==='logs';shell.parentElement.hidden=logs;toolbar.hidden=!logs;exportBar.hidden=!logs;host.classList.toggle('logs-mode',logs)};
  const change=async()=>{await closePodDebug();stop.disabled=true;host.replaceChildren(logOutput);text='';renderLogs();updateMode();status.textContent='Настройки изменены · нажмите «Подключиться»'};mode.onchange=change;container.onchange=change;shell.onchange=change;updateMode();
  controls.append(start,stop,status);$('lab-extra').append(controls,toolbar,exportBar,host,element('p','Буфер: до 10 000 строк / 2 млн символов. Экспорт сохраняет только загруженный буфер, не всю историю контейнера. Размер окна можно менять за нижний правый угол.','debug-hint'));start.disabled=true;
- try{const data=await api('pod',{name:pod.name,namespace:pod.namespace});if(!host.isConnected)return;for(const name of data.containers){const option=element('option',name);option.value=name;container.append(option)}start.disabled=!data.containers.length;status.textContent=data.containers.length?'Готово к подключению':'Контейнеры не найдены'}catch(e){status.textContent=e.message}
+ try{const data=await api('pod',{name:pod.name,namespace:pod.namespace});if(!host.isConnected)return;for(const name of data.containers){const option=element('option',name);option.value=name;container.append(option)}start.disabled=!data.containers.length;if(options.container&&data.containers.includes(options.container))container.value=options.container;status.textContent=data.containers.length?'Готово к подключению':'Контейнеры не найдены';if(options.autoConnect&&!start.disabled)start.click()}catch(e){status.textContent=e.message}
 }
