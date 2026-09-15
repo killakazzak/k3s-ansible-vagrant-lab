@@ -44,6 +44,13 @@ command_name="${1:-menu}"
 case "$command_name" in
   menu)
     [[ $# -eq 0 ]] || { usage >&2; exit 2; }
+    "$ROOT/scripts/install-vagrant.sh"
+    "$ROOT/scripts/install-ansible.sh"
+    if python3 "$ROOT/scripts/web-service.py" start; then
+      export K3S_LAB_WEB_LINK_SHOWN=1
+    else
+      echo 'Веб-консоль не запустилась. Меню доступно; журнал: .cache/web-server.log' >&2
+    fi
     exec ruby "$ROOT/scripts/menu.rb"
     ;;
   web)

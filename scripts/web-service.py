@@ -55,7 +55,7 @@ def main():
                 time.sleep(.1)
             if not url: raise ValueError('Веб-сервер не успел запуститься. Проверьте ' + str(log))
         print('Веб-сервер работает в фоне. Закрытие меню не останавливает его.')
-        print(url)
+        print('Ссылка для подключения: ' + url)
     elif args.action == 'stop':
         if not url:
             print('Веб-сервер уже остановлен.')

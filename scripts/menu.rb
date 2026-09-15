@@ -388,7 +388,7 @@ class ClusterMenu
   end
 
   def start
-    show_web_link
+    show_web_link unless ENV.delete('K3S_LAB_WEB_LINK_SHOWN') == '1'
     loop do
       show
       puts "\n1. Создать / применить конфигурацию\n2. Удалить кластер\n3. Состояние VM и узлов\n4. Проверить сеть и Traefik\n5. Добавить worker\n6. Удалить worker\n7. Изменить CPU / RAM узла\n8. Изменить версию k3s\n9. Добавить master\n10. Удалить master\n11. Ссылки на Rancher и Traefik\n12. Запустить веб-сервер / показать ссылку\n13. Список кластеров\n14. Подключиться через kubectl\n15. Остановить веб-сервер\n16. Остановить VM стенда (сохранить данные)\n17. Возобновить VM стенда\n18. Установить Rancher\n0. Выход"
