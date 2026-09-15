@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import shutil
 import time
 from urllib.parse import urlsplit, parse_qs
 from urllib.request import Request, urlopen
@@ -33,10 +34,33 @@ def running_url():
         raise ValueError('Некорректный адрес веб-сервера')
     return url
 
+def show_connection(url, open_browser=False):
+    print('\nСсылка для подключения:')
+    print(url)
+    print()
+    if not open_browser or not sys.stdin.isatty() or not sys.stdout.isatty():
+        return
+    if os.environ.get('SSH_CONNECTION') or os.environ.get('LAB_OPEN_BROWSER', '1') == '0':
+        return
+    opener = shutil.which('open') if sys.platform == 'darwin' else shutil.which('xdg-open') if os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY') else None
+    if not opener:
+        print('Откройте ссылку выше в браузере.')
+        return
+    try:
+        result = subprocess.run([opener, url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        if result.returncode == 0:
+            print('Ссылка отправлена в браузер. Отключить автооткрытие: LAB_OPEN_BROWSER=0 ./cluster.sh')
+        else:
+            print('Не удалось открыть браузер автоматически. Откройте ссылку выше.')
+    except (OSError, subprocess.TimeoutExpired):
+        print('Не удалось открыть браузер автоматически. Откройте ссылку выше.')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['start', 'stop', 'status'])
     parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--no-browser', action='store_true', help='Не открывать браузер при запуске')
     args = parser.parse_args()
     url = running_url()
     if args.action == 'start':
@@ -55,7 +79,7 @@ def main():
                 time.sleep(.1)
             if not url: raise ValueError('Веб-сервер не успел запуститься. Проверьте ' + str(log))
         print('Веб-сервер работает в фоне. Закрытие меню не останавливает его.')
-        print('Ссылка для подключения: ' + url)
+        show_connection(url, open_browser=not args.no_browser)
     elif args.action == 'stop':
         if not url:
             print('Веб-сервер уже остановлен.')
@@ -75,7 +99,10 @@ def main():
             time.sleep(.1)
         raise ValueError('Сервер ещё завершает работу. Повторите проверку состояния.')
     else:
-        print('Веб-сервер остановлен.' if not url else 'Веб-сервер работает:\n' + url)
+        if not url: print('Веб-сервер остановлен.')
+        else:
+            print('Веб-сервер работает.')
+            show_connection(url)
 
 if __name__ == '__main__':
     try: main()
