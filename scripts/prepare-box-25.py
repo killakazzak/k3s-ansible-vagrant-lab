@@ -15,10 +15,13 @@ for filename, start in [('pkr-plugins.pkr.hcl', '    utm = {'), ('pkr-sources.pk
         if text[end] == '}': depth -= 1
         end += 1
     path.write_text(text[:begin] + text[end:])
-# Recent VirtualBox builders name the default IDE controller "IDE".
+# ARM VirtualBox uses IDE; x86_64 uses the original IDE Controller name.
+# Normalize both pristine templates and previously patched cached templates.
 path = root / 'pkr-sources.pkr.hcl'
 text = path.read_text()
-path.write_text(text.replace('"IDE Controller", "--remove"', '"IDE", "--remove"'))
+for controller in ('IDE Controller', 'IDE'):
+    text = text.replace('"' + controller + '", "--remove"', '(var.os_arch == "aarch64" ? "IDE" : "IDE Controller"), "--remove"')
+path.write_text(text)
 # Resolve guest NAT DNS through macOS (including its VPN resolver).
 text = path.read_text()
 needle = '["modifyvm", "{{.Name}}", "--nat-localhostreachable1", "on"],'
