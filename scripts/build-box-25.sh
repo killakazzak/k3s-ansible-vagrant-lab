@@ -20,7 +20,9 @@ if [[ ! -d "$BENTO/.git" ]]; then
   git -C "$BENTO" checkout c884c077e041f54f56e4e07baddd916c49d31a0e
 fi
 /usr/bin/python3 "$ROOT/scripts/prepare-box-25.py" "$BENTO"
+echo '[Этап] Загрузка и проверка ISO Ubuntu до запуска Packer'
+python3 "$ROOT/scripts/prepare-iso.py" "$BENTO/os_pkrvars/ubuntu/ubuntu-24.04-${guest_arch}.pkrvars.hcl" "$CACHE/iso" "$CACHE/local-iso.pkrvars.json"
 cd "$BENTO"
 "$PACKER" init packer_templates
-"$PACKER" build -only=virtualbox-iso.vm -var-file=os_pkrvars/ubuntu/ubuntu-24.04-${guest_arch}.pkrvars.hcl -var 'sources_enabled=["source.virtualbox-iso.vm"]' -var disk_size=25600 -var cpus=2 -var memory=4096 -var headless=true packer_templates
+"$PACKER" build -only=virtualbox-iso.vm -var-file=os_pkrvars/ubuntu/ubuntu-24.04-${guest_arch}.pkrvars.hcl -var-file="$CACHE/local-iso.pkrvars.json" -var 'sources_enabled=["source.virtualbox-iso.vm"]' -var disk_size=25600 -var cpus=2 -var memory=4096 -var headless=true packer_templates
 vagrant box add --name "$BOX_NAME" --provider virtualbox --architecture "$LAB_HOST_ARCH" builds/build_complete/ubuntu-24.04-${guest_arch}.virtualbox.box
