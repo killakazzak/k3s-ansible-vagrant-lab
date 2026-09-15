@@ -341,6 +341,36 @@ async function openPodDebug(pod,options={}){
  }catch(e){status.textContent=e.message;await closePodDebug(true);stop.disabled=true}finally{if(host.isConnected){start.disabled=!!podDebugSession&&!podDebugSession.closed;if(!start.disabled)start.textContent='Подключиться';container.disabled=false;mode.disabled=false;shell.disabled=false}}},'button primary');
  const updateMode=()=>{const logs=mode.value==='logs';shell.parentElement.hidden=logs;toolbar.hidden=!logs;exportBar.hidden=!logs;host.classList.toggle('logs-mode',logs)};
  const change=async()=>{await closePodDebug();clearTerminal();stop.disabled=true;start.disabled=false;start.textContent='Подключиться';host.replaceChildren(logOutput);text='';renderLogs();updateMode();status.textContent='Настройки изменены · нажмите «Подключиться»'};mode.onchange=change;container.onchange=change;shell.onchange=change;updateMode();
- controls.append(start,stop,status);$('lab-extra').append(controls,toolbar,exportBar,host,element('p','Буфер: до 10 000 строк / 2 млн символов. Экспорт сохраняет только загруженный буфер, не всю историю контейнера. Размер окна можно менять за нижний правый угол.','debug-hint'));start.disabled=true;
+ controls.append(start,stop,status);$('lab-extra').append(controls,toolbar,exportBar,host,element('p','Буфер: до 10 000 строк / 2 млн символов. Экспорт сохраняет только загруженный буфер, не всю историю контейнера. Тяните за любой край или угол окна, чтобы изменить размер.','debug-hint'));start.disabled=true;
  try{const data=await api('pod',{name:pod.name,namespace:pod.namespace});if(!host.isConnected)return;for(const name of data.containers){const option=element('option',name);option.value=name;container.append(option)}start.disabled=!data.containers.length;if(options.container&&data.containers.includes(options.container))container.value=options.container;status.textContent=data.containers.length?'Готово к подключению':'Контейнеры не найдены';if(options.autoConnect&&!start.disabled)start.click()}catch(e){status.textContent=e.message}
 }
+
+// Resize diagnostic windows from any edge, including when initially maximized.
+(()=>{
+ const dialog=$('lab-dialog');let drag=null;
+ const enabled=()=>dialog.open&&(dialog.classList.contains('debug-dialog')||dialog.classList.contains('diagnostics-dialog'));
+ const edges=e=>{const r=dialog.getBoundingClientRect(),x=e.clientX,y=e.clientY;if(x<r.left||x>r.right||y<r.top||y>r.bottom)return '';return (y-r.top<12?'n':r.bottom-y<12?'s':'')+(x-r.left<12?'w':r.right-x<12?'e':'')};
+ const cursor=edge=>({n:'ns',s:'ns',w:'ew',e:'ew',nw:'nwse',se:'nwse',ne:'nesw',sw:'nesw'}[edge]||'')+'-resize';
+ const finish=()=>{if(!drag)return;const id=drag.id;drag=null;if(dialog.hasPointerCapture(id))dialog.releasePointerCapture(id);dialog.classList.remove('dialog-resizing');dialog.style.removeProperty('cursor')};
+ dialog.addEventListener('pointerdown',e=>{
+  if(!enabled()||e.button!==0)return;const edge=edges(e);if(!edge)return;
+  e.preventDefault();const r=dialog.getBoundingClientRect();drag={id:e.pointerId,edge,x:e.clientX,y:e.clientY,left:r.left,top:r.top,right:r.right,bottom:r.bottom};
+  dialog.classList.remove('debug-expanded','diagnostics-expanded');const expand=dialog.querySelector('.debug-expand,.diagnostic-expand');if(expand){expand.textContent='⛶ Развернуть';expand.setAttribute('aria-pressed','false')}
+  Object.assign(dialog.style,{margin:'0',left:r.left+'px',top:r.top+'px',right:'auto',bottom:'auto',width:r.width+'px',height:r.height+'px',cursor:cursor(edge)});
+  dialog.classList.add('dialog-resizing');dialog.setPointerCapture(e.pointerId);
+ },true);
+ dialog.addEventListener('pointermove',e=>{
+  if(!enabled())return;
+  if(!drag){const edge=edges(e);if(edge)dialog.style.cursor=cursor(edge);else dialog.style.removeProperty('cursor');return}
+  e.preventDefault();const d=drag,dx=e.clientX-d.x,dy=e.clientY-d.y,minW=Math.min(540,innerWidth-24),minH=Math.min(420,innerHeight-24);
+  let l=d.left,r=d.right,t=d.top,b=d.bottom;
+  if(d.edge.includes('w'))l=Math.max(12,Math.min(d.left+dx,r-minW));
+  if(d.edge.includes('e'))r=Math.min(innerWidth-12,Math.max(d.right+dx,l+minW));
+  if(d.edge.includes('n'))t=Math.max(12,Math.min(d.top+dy,b-minH));
+  if(d.edge.includes('s'))b=Math.min(innerHeight-12,Math.max(d.bottom+dy,t+minH));
+  Object.assign(dialog.style,{left:l+'px',top:t+'px',width:(r-l)+'px',height:(b-t)+'px'});
+ });
+ for(const event of ['pointerup','pointercancel','lostpointercapture'])dialog.addEventListener(event,finish);
+ dialog.addEventListener('pointerleave',()=>{if(!drag)dialog.style.removeProperty('cursor')});
+ dialog.addEventListener('close',()=>{finish();for(const key of ['margin','left','top','right','bottom','width','height','cursor'])dialog.style.removeProperty(key)});
+})();

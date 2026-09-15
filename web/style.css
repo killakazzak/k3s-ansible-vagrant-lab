@@ -142,3 +142,7 @@
 .diagnostic-panel>input{height:34px;padding:6px 10px;font-size:12px}.diagnostic-log{background:#142e31;color:#d6e8df;padding:15px;border-radius:10px;overflow:auto;white-space:pre;font:12px/1.7 ui-monospace,monospace;max-height:none;min-height:180px}
 .diagnostics-dialog .modalfooter{margin-top:0;padding-top:12px}.diagnostics-dialog .modalfooter .button{font-size:12px;padding:7px 14px}
 @media(max-width:650px){#lab-dialog.diagnostics-dialog{padding:14px}.diagnostic-summary{margin-left:0}.diagnostic-event>div{align-items:flex-start;flex-direction:column}}
+
+#lab-dialog.debug-dialog,#lab-dialog.diagnostics-dialog{resize:none}
+#lab-dialog.debug-expanded,#lab-dialog.diagnostics-expanded{inset:0!important;margin:auto!important}
+#lab-dialog.dialog-resizing,#lab-dialog.dialog-resizing *{user-select:none!important;cursor:inherit!important}
