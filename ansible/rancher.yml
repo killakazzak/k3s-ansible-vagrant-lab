@@ -25,6 +25,10 @@
               - "{{ playbook_dir }}/.."
           delegate_to: localhost
           become: false
+          vars:
+            ansible_become: false
+            ansible_connection: local
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
           changed_when: false
           register: rancher_image_cache
           failed_when: false
