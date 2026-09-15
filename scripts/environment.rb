@@ -35,6 +35,8 @@ checks.each do |name,args|
   failed<<name unless ok
   puts format('%-19s %-9s %s',name,ok ? 'OK' : 'MISSING',detail)
 end
+packer_ok,packer_detail=probe('packer','version')
+puts format('%-19s %-9s %s','Packer',packer_ok ? 'OK' : 'LOCAL',packer_ok ? packer_detail : 'локальный архив в vendor/packer; устанавливается при сборке box')
 ok,detail=probe('kubectl','version','--client=true','-o','yaml')
 puts format('%-19s %-9s %s','kubectl',ok ? 'OK' : 'LATER',ok ? 'клиент доступен' : 'устанавливается при развёртывании кластера')
 puts "\nОС / архитектура: #{RbConfig::CONFIG['host_os']} / #{RbConfig::CONFIG['host_cpu']}"

@@ -15,4 +15,5 @@ fi
 "$ROOT/scripts/install-vagrant.sh"
 "$ROOT/scripts/install-ansible.sh"
 "$ROOT/scripts/install-virtualbox.sh"
+"$ROOT/scripts/install-packer.sh"
 ruby "$ROOT/scripts/environment.rb"
