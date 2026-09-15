@@ -28,6 +28,7 @@ import terminal_sessions
 import topology
 import lab_apps
 import profile_layout
+import remote_clusters
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV = dict(os.environ)
@@ -44,6 +45,9 @@ def cluster_root(name):
         return ROOT
     if not re.fullmatch(r'[a-z][a-z0-9-]{0,30}', name):
         raise ValueError('Некорректное имя кластера')
+    remote = ROOT / '.connections' / name
+    if remote.is_dir() and not remote.is_symlink() and remote_clusters.external(remote):
+        return remote
     path = ROOT / '.clusters' / name
     if not path.is_dir() or path.is_symlink():
         raise ValueError('Кластер не найден')
@@ -101,7 +105,9 @@ def run_kubectl(command):
 
 def cluster_names():
     folder = ROOT / '.clusters'
-    return ['default'] + sorted(p.name for p in folder.iterdir() if p.is_dir() and not p.is_symlink() and re.fullmatch(r'[a-z][a-z0-9-]{0,30}', p.name)) if folder.exists() else ['default']
+    local = ['default'] + sorted(p.name for p in folder.iterdir() if p.is_dir() and not p.is_symlink() and re.fullmatch(r'[a-z][a-z0-9-]{0,30}', p.name)) if folder.exists() else ['default']
+    remote=ROOT/'.connections'
+    return local + (sorted(p.name for p in remote.iterdir() if p.is_dir() and not p.is_symlink() and remote_clusters.external(p)) if remote.exists() else [])
 
 def cluster_env(root):
     return dict(ENV, PATH=str(root/'.offline-venv/bin')+':'+str(ROOT/'.offline-venv/bin')+':'+ENV['PATH'], VAGRANT_CWD=str(root), VAGRANT_DOTFILE_PATH=str(root / '.vagrant'))
@@ -113,7 +119,7 @@ def visible_clusters():
         for name in cluster_names():
             CONTEXT.root = cluster_root(name)
             try:
-                if config()['nodes']: visible.append(name)
+                if remote_clusters.external(active_root()) or config()['nodes']: visible.append(name)
             except Exception:
                 visible.append(name)  # Keep broken profiles available for diagnosis.
     finally:
@@ -143,7 +149,7 @@ def profile_in_use(name):
     try:
         root = cluster_root(name)
         CONTEXT.root = root
-        return bool(config()['nodes']) or any((root / '.vagrant/machines').glob('*/*/id'))
+        return remote_clusters.external(root) or bool(config()['nodes']) or any((root / '.vagrant/machines').glob('*/*/id'))
     except Exception:
         return True  # Never reuse a profile whose state cannot be read.
     finally:
@@ -159,7 +165,7 @@ def next_cluster_name():
 
 def new_cluster(name, cidr, params=None):
     name = name.strip() or next_cluster_name()
-    if not re.fullmatch(r'[a-z][a-z0-9-]{0,30}', name) or name == 'default':
+    if not re.fullmatch(r'[a-z][a-z0-9-]{0,30}', name) or name == 'default' or name.startswith('remote-'):
         raise ValueError('Имя: строчные латинские буквы, цифры и дефисы, до 31 символа')
     network = ipaddress.ip_network(cidr, strict=True)
     if network.version != 4 or network.prefixlen != 24 or not any(network.subnet_of(ipaddress.ip_network(n)) for n in ['10.0.0.0/8','172.16.0.0/12','192.168.0.0/16']):
@@ -220,6 +226,8 @@ def capture(args, timeout=15):
 
 
 def config():
+    if remote_clusters.external(active_root()):
+        return dict(external=True,nodes=[],defaults={role:dict(cpu=2,ram=4096,disk=25) for role in ('server','workers')},network='',version='Kubernetes',provider='Удалённый кластер',metricsEnabled=False,rancher=False,traefik=False)
     code = "require 'yaml'; require 'json'; puts JSON.generate({settings: YAML.load_file('ansible/group_vars/all.yml'), inventory: YAML.load_file('ansible/inventory.yml')})"
     data = json.loads(capture(['ruby', '-e', code]))
     cfg = data['settings']
@@ -247,6 +255,17 @@ def verify_result(root):
 
 def status():
     result = config()
+    if result.get('external'):
+        result.update(exists=True,reachable=False,error=None,verification=None)
+        try:
+            live=json.loads(capture(['./kubectl.sh','get','nodes','-o','json','--request-timeout=5s'],8))
+            for n in live['items']:
+                st=n.get('status',{});cap=st.get('capacity',{});labels=n['metadata'].get('labels',{})
+                result['nodes'].append(dict(name=n['metadata']['name'],role='server' if any(k in labels for k in ('node-role.kubernetes.io/control-plane','node-role.kubernetes.io/master')) else 'workers',ip=next((a['address'] for a in st.get('addresses',[]) if a['type']=='InternalIP'),'—'),cpu=cap.get('cpu','—'),ram=lab_apps.resource_quantity(cap.get('memory','0'))/1024**2,disk='—',state='Ready' if any(c['type']=='Ready' and c['status']=='True' for c in st.get('conditions',[])) else 'NotReady'))
+            result['reachable']=True
+        except Exception:
+            result['error']='Удалённый API недоступен или нет права просмотра узлов. Проверьте VPN и kubeconfig.'
+        return result
     result['verification'] = verify_result(active_root())
     result['reachable'] = False
     result['error'] = None
@@ -320,7 +339,7 @@ def node_utilization():
     with ThreadPoolExecutor(max_workers=4) as pool:return list(pool.map(one,nodes))
 
 def links():
-    if not config()['nodes']:
+    if remote_clusters.external(active_root()) or not config()['nodes']:
         return {}
     # Render configurable Jinja hostnames with Ansible, just like deployment does.
     output = capture(['ansible', 'server', '--limit', config()['nodes'][0]['name'], '-m', 'ansible.builtin.debug', '-a',
@@ -464,10 +483,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        if path in ('/', '/app.js', '/style.css', '/vendor/xterm.js', '/vendor/xterm.css', '/vendor/addon-fit.js', '/graph.js', '/apps.js', '/pod-filters.js'):
+        if path in ('/', '/remote.js', '/app.js', '/style.css', '/vendor/xterm.js', '/vendor/xterm.css', '/vendor/addon-fit.js', '/graph.js', '/apps.js', '/pod-filters.js'):
             if self.headers.get('Host') != '127.0.0.1:' + str(self.server.server_port):
                 return self.reply(403, {'error': 'Недопустимый Host'})
-            file, mime = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/vendor/xterm.js': ('vendor/xterm.js', 'text/javascript'), '/vendor/xterm.css': ('vendor/xterm.css', 'text/css'), '/vendor/addon-fit.js': ('vendor/addon-fit.js', 'text/javascript'), '/pod-filters.js': ('pod-filters.js', 'text/javascript'), '/graph.js': ('graph.js', 'text/javascript'), '/apps.js': ('apps.js', 'text/javascript')}[path]
+            file, mime = {'/remote.js': ('remote.js','text/javascript'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/vendor/xterm.js': ('vendor/xterm.js', 'text/javascript'), '/vendor/xterm.css': ('vendor/xterm.css', 'text/css'), '/vendor/addon-fit.js': ('vendor/addon-fit.js', 'text/javascript'), '/pod-filters.js': ('pod-filters.js', 'text/javascript'), '/graph.js': ('graph.js', 'text/javascript'), '/apps.js': ('apps.js', 'text/javascript')}[path]
             return self.reply(200, (ROOT / 'web' / file).read_bytes(), mime + '; charset=utf-8')
         if not self.allowed():
             return
@@ -547,15 +566,33 @@ class Handler(BaseHTTPRequestHandler):
         global JOB, STOPPING
         if not self.allowed():
             return
-        if self.path not in ('/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods', '/api/app-access', '/api/resource-yaml', '/api/yaml-preview', '/api/yaml-apply'):
+        if self.path not in ('/api/connections', '/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods', '/api/app-access', '/api/resource-yaml', '/api/yaml-preview', '/api/yaml-apply'):
             return self.reply(404, {'error': 'Не найдено'})
         try:
             length = int(self.headers.get('Content-Length', 0))
-            if not 0 < length <= (2097152 if self.path=='/api/yaml-preview' else 32768):
+            if not 0 < length <= (2097152 if self.path in ('/api/yaml-preview','/api/connections') else 32768):
                 raise ValueError('Некорректный размер запроса')
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError('Некорректный запрос')
+            if remote_clusters.external(active_root()):
+                remote_clusters.permit(self.path,data)
+            if self.path == '/api/connections':
+                with LOCK:
+                    if JOB and JOB['state']=='running':raise ValueError('Дождитесь завершения операции')
+                    operation=data.get('operation')
+                    if operation=='contexts':
+                        cfg=remote_clusters.parse(ROOT,ENV,data.get('kubeconfig'))
+                        return self.reply(200,dict(contexts=[x['name'] for x in cfg['contexts']],current=cfg.get('current-context')))
+                    if operation=='connect':return self.reply(201,remote_clusters.connect(ROOT,ENV,data))
+                    if operation=='disconnect':
+                        if data.get('confirmed') is not True:raise ValueError('Подтвердите удаление подключения')
+                        with terminal_sessions.LOCK:
+                            for key,session in list(terminal_sessions.SESSIONS.items()):
+                                if session.root==active_root():
+                                    session.close();del terminal_sessions.SESSIONS[key]
+                        return self.reply(200,remote_clusters.disconnect(ROOT,active_root()))
+                    raise ValueError('Неизвестная операция подключения')
             if self.path == '/api/shutdown':
                 with LOCK:
                     if JOB and JOB['state'] == 'running':

@@ -143,6 +143,7 @@ function runTemplate(t){
 function openUpdate(app){labOpen('Версия и реплики · '+app.name,'Кластер '+selectedCluster+', namespace '+app.namespace+'. Обновление образа выполняется постепенно. PVC сохраняются. Смена major PostgreSQL здесь недоступна.',data=>labAction('app_update',{...data,kind:app.kind,name:app.name,namespace:app.namespace}));const input=labField('container','Контейнер',app.containers[0].name,'text',app.containers.map(c=>c.name));labField('image','Новый образ с тегом',app.containers[0].image);labField('replicas','Число реплик (0 — остановить приложение)',app.replicas,'number');input.onchange=()=>{$('lab-image').value=app.containers.find(c=>c.name===input.value).image};}
 function appConfirm(app,action){labOpen(action==='app_rollback'?'Откатить '+app.name:'Проверить '+app.name,action==='app_rollback'?'Возврат к предыдущей ревизии шаблона Pod. Реплики и данные на диске не откатываются.':'Проверим готовность, DNS и Service. Для приложений каталога — также PostgreSQL SELECT 1 или Redis PING; при наличии HTTP Ingress проверим URL.',()=>labAction(action,{kind:app.kind,name:app.name,namespace:app.namespace}));}
 async function refreshApps(){
+ if(selectedCluster.startsWith('remote-'))return;
  if(appsLoading)return;appsLoading=true;const cluster=selectedCluster;
  const sum=state?state.nodes.reduce((a,n)=>({cpu:a.cpu+n.cpu,ram:a.ram+n.ram,disk:a.disk+n.disk}),{cpu:0,ram:0,disk:0}):null;
  if(sum)$('stand-budget').textContent=`Конфигурация VM: ${sum.cpu} CPU · ${Math.round(sum.ram/1024*10)/10} GiB RAM · ${sum.disk} GiB дисков`;
@@ -192,7 +193,7 @@ async function showPodDiagnostics(pod){
  for(const [key,label] of [['state','Состояние'],['events','События'],['logs','Логи']]){const button=resourceButton(label,()=>{tab=key;render()},'diagnostic-tab');button.dataset.tab=key;button.id='diagnostic-tab-'+key;button.setAttribute('role','tab');button.setAttribute('aria-controls',body.id);button.onkeydown=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const list=[...tabs.children],index=list.indexOf(button),next=e.key==='Home'?0:e.key==='End'?list.length-1:(index+(e.key==='ArrowRight'?1:list.length-1))%list.length;list[next].click();list[next].focus()};tabs.append(button)}
  const load=async()=>{const request=++diagnosticRequest;message.textContent='Обновление…';refresh.disabled=true;try{sameCluster();const result=await api('pod',{namespace:pod.namespace,name:pod.name,container:selector.value||undefined,previous:previous.value==='true'});if(request!==diagnosticRequest||!body.isConnected||labCluster!==selectedCluster)return;data=result;selector.replaceChildren();for(const c of result.containers||[]){const option=element('option',c);option.value=c;selector.append(option)}selector.value=result.container;terminal.disabled=!selector.value;message.textContent=(result.phase||'Unknown')+' · '+(result.node||'Узел не назначен');render()}catch(e){if(request===diagnosticRequest&&body.isConnected){message.textContent='Не удалось обновить';labError(e)}}finally{if(body.isConnected)refresh.disabled=false}};
  const refresh=resourceButton('↻ Обновить',load,'button secondary');
- const terminal=resourceButton('>_ Терминал',()=>openPodTerminal(pod,selector.value).catch(labError),'button primary');terminal.disabled=true;
+ const terminal=resourceButton('>_ Терминал',()=>openPodTerminal(pod,selector.value).catch(labError),'button primary');terminal.disabled=true;terminal.hidden=!!state?.external;
  const live=resourceButton('Онлайн-логи',async()=>{await new Promise(resolve=>{dialog.addEventListener('close',resolve,{once:true});dialog.close()});await openPodDebug(pod)},'button secondary');
  actions.append(terminal,live,refresh,message);$('lab-extra').append(actions,tabs,body);selector.onchange=previous.onchange=load;render();load();
 }
@@ -308,6 +309,7 @@ async function openPodDebug(pod,options={}){
  const dialog=$('lab-dialog');dialog.classList.add('debug-dialog');$('lab-cancel').textContent='Закрыть';
  const expand=resourceButton('⛶ Развернуть',()=>{const full=dialog.classList.toggle('debug-expanded');expand.textContent=full?'↙ Свернуть':'⛶ Развернуть';expand.setAttribute('aria-pressed',String(full))},'button secondary debug-expand');expand.setAttribute('aria-pressed','false');$('lab-close').before(expand);
  const container=labField('debug-container','Контейнер','','text',[]);const mode=labField('debug-mode','Режим',options.mode||'logs','text',[{value:'logs',label:'Онлайн-логи'},{value:'shell',label:'Терминал'}]);const shell=labField('debug-shell','Shell','bash','text',[{value:'bash',label:'Bash (если нет — sh)'},{value:'sh',label:'sh'}]);
+ if(state?.external){mode.querySelector('[value=shell]').remove();mode.value='logs';}
  const status=element('p','Загрузка контейнеров…','debug-status');status.setAttribute('role','status');
  const host=element('div',undefined,'pod-debug-terminal');const clearTerminal=()=>{host._debugTerm?.dispose();host._debugTerm=null};dialog.addEventListener('close',clearTerminal,{once:true});const logOutput=element('pre','','debug-log-output');logOutput.tabIndex=0;logOutput.setAttribute('aria-label','Логи контейнера');host.append(logOutput);
  const controls=element('div',undefined,'debug-connect-controls');const toolbar=element('div',undefined,'debug-log-toolbar');
@@ -380,6 +382,7 @@ $('graph-refresh').after(metricsInstall);
 
 const metricsStates=new Map();
 function renderMetricsServer(update={}){
+ metricsInstall.hidden=!!state?.external;
  const current={...(metricsStates.get(selectedCluster)||{}),...update};metricsStates.set(selectedCluster,current);
  const installing=activeJob?.cluster===selectedCluster&&activeJob.action==='metrics_install'&&activeJob.state==='running';
  const locked=!!activeJob&&activeJob.state==='running';

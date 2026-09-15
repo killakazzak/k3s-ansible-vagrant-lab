@@ -150,3 +150,10 @@
 .container-usage{display:flex;flex-direction:column;gap:2px;margin:3px 0}.container-usage small{font-size:10px;color:#71877b;white-space:nowrap;font-variant-numeric:tabular-nums}.pod-usage-total{font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
 
 .button.metrics-ready:disabled{opacity:1;color:#28754f;background:#e9f5ed;border-color:#c8e4d2;cursor:default}
+
+/* External clusters expose only inspection and diagnostics. */
+.remote-profile [data-action],.remote-profile #applications,.remote-profile #services,.remote-profile #operations,.remote-profile .kubectl-console,.remote-profile [data-view="services"],.remote-profile [data-view="operations"]{display:none!important}
+.remote-profile #nodes .nodebuttons{display:none!important}
+
+.remote-upload input[type=file]{height:auto;min-height:46px;padding:8px;width:100%}
+.remote-upload input::file-selector-button{border:0;border-radius:7px;background:#eaf3ef;color:#236b57;padding:7px 12px;margin-right:10px;font:inherit;cursor:pointer}

@@ -60,6 +60,7 @@ function renderProgress() {
   }
 }
 function render() {
+  if(typeof renderRemoteProfile==='function')renderRemoteProfile();
   if(typeof renderMetricsServer==='function')renderMetricsServer({enabled:state.metricsEnabled,exists:state.exists});
   const ready=state.nodes.filter(n=>n.state==='Ready').length;
   $('health').textContent=state.exists===false?'Не создан':state.paused?'Остановлен':state.reachable?'На связи':'Недоступен';
@@ -67,12 +68,12 @@ function render() {
   $('node-count').textContent=ready+' / '+state.nodes.length;
   $('roles').textContent=state.nodes.filter(n=>n.role==='server').length+' master · '+state.nodes.filter(n=>n.role==='workers').length+' workers';
   $('memory').textContent=(state.nodes.reduce((s,n)=>s+n.ram,0)/1024).toFixed(0)+' ГБ';
-  $('version').textContent=state.version; $('provider').textContent=state.provider+' · ARM64';
+  $('version').textContent=state.version; $('provider').textContent=state.external?'Удалённый кластер · только просмотр':state.provider+' · ARM64';
   $('node-list').replaceChildren();
   if(!state.nodes.length){const row=element('tr'),cell=element('td','Кластер пуст. Нажмите «Новый кластер».');cell.colSpan=6;row.append(cell);$('node-list').append(row)}
   for (const node of state.nodes) {
     const tr=element('tr'),name=element('td');name.append(element('span',node.name,'node-name'),element('span',node.role==='server'?'CONTROL PLANE':'WORKER','role'));tr.append(name);
-    const status=element('td');status.append(element('span',(node.state==='Absent'?'Не создан':node.state)+(node.vm_state==='poweroff'?' / VM выключена':''),'badge '+node.state));tr.append(status,element('td',node.ip),element('td',node.cpu+' CPU / '+node.ram/1024+' ГБ / '+node.disk+' ГБ диск'));
+    const status=element('td');status.append(element('span',(node.state==='Absent'?'Не создан':node.state)+(node.vm_state==='poweroff'?' / VM выключена':''),'badge '+node.state));tr.append(status,element('td',node.ip),element('td',node.cpu+' CPU / '+(node.ram/1024).toFixed(1)+' ГБ'+(state.external?'':' / '+node.disk+' ГБ диск')));
     const usage=element('td',undefined,'node-utilization');usage.dataset.node=node.name;tr.append(usage);
     const actions=element('td'),wrap=element('div',undefined,'nodebuttons');
     const edit=element('button','Настроить','textbutton');edit.dataset.action='resources';edit.dataset.node=node.name;wrap.append(edit);
@@ -84,7 +85,7 @@ function render() {
   renderNodeUsage();
   renderProgress();
 }
-function setBusy(value){busy=value;if(typeof renderMetricsServer==='function')renderMetricsServer();$('cluster-select').disabled=clusterCount===0;$('new-cluster').disabled=value;$('create-cluster').disabled=value;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=value || (!!state && !state.nodes.length && !['create'].includes(b.dataset.action)))}
+function setBusy(value){busy=value;if(typeof renderMetricsServer==='function')renderMetricsServer();$('cluster-select').disabled=clusterCount===0;$('new-cluster').disabled=value;$('create-cluster').disabled=value;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=value || !!state?.external || (!!state && !state.nodes.length && !['create'].includes(b.dataset.action)))}
 async function refresh(){
   while(refreshPromise){await refreshPromise;}
   const cluster=selectedCluster;
@@ -93,7 +94,7 @@ async function refresh(){
   await request;
   if(refreshPromise===request)refreshPromise=null;
 }
-async function loadLinks(){const cluster=selectedCluster;if(state && !state.nodes.length){for(const name of ['rancher','traefik']){const a=$(name+'-link');a.removeAttribute('href');a.textContent='Появится после создания кластера'}return;}try{const links=await api('links');if(cluster!==selectedCluster)return;for(const name of ['rancher','traefik']){const a=$(name+'-link');if(state && !state[name]){a.textContent='Отключён в конфигурации';a.removeAttribute('href');continue}const url=new URL(links[name]);if(url.protocol!=='https:')throw Error('Некорректная ссылка');a.href=url.href;a.textContent=url.hostname+' ↗'}}catch(e){if(cluster!==selectedCluster)return;for(const name of ['rancher','traefik'])$(name+'-link').textContent='Адрес недоступен';error(e.message)}}
+async function loadLinks(){const cluster=selectedCluster;if(state?.external)return;if(state && !state.nodes.length){for(const name of ['rancher','traefik']){const a=$(name+'-link');a.removeAttribute('href');a.textContent='Появится после создания кластера'}return;}try{const links=await api('links');if(cluster!==selectedCluster)return;for(const name of ['rancher','traefik']){const a=$(name+'-link');if(state && !state[name]){a.textContent='Отключён в конфигурации';a.removeAttribute('href');continue}const url=new URL(links[name]);if(url.protocol!=='https:')throw Error('Некорректная ссылка');a.href=url.href;a.textContent=url.hostname+' ↗'}}catch(e){if(cluster!==selectedCluster)return;for(const name of ['rancher','traefik'])$(name+'-link').textContent='Адрес недоступен';error(e.message)}}
 function componentChoice(){
  const metricsLabel=element('label');const metrics=element('select');metrics.name='metrics_enabled';metrics.id='field-metrics_enabled';metricsLabel.htmlFor=metrics.id;metricsLabel.textContent='Метрики CPU/RAM';for(const [value,text] of [['true','Включены — Metrics Server'],['false','Не устанавливать']]){const o=element('option',text);o.value=value;metrics.append(o)}$('fields').append(metricsLabel,metrics);
 
@@ -150,7 +151,7 @@ async function loadClusters(){
   sessionStorage.setItem('lab-cluster',selectedCluster);
   $('cluster-select').replaceChildren();
   if(!names.length){const empty=element('option','Нет кластеров — создайте новый');empty.value='default';$('cluster-select').append(empty)}
-  for(const name of names){const option=element('option',name==='default'?'k8s-cluster1 (основной)':name);option.value=name;$('cluster-select').append(option)}
+  for(const name of names){const option=element('option',name==='default'?'k8s-cluster1 (основной)':name.startsWith('remote-')?'↗ '+name.slice(7):name);option.value=name;$('cluster-select').append(option)}
   $('cluster-select').value=selectedCluster;
   $('cluster-select').disabled=!names.length;
   renderKubectl();

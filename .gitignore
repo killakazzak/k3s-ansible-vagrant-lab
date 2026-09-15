@@ -44,3 +44,6 @@ vendor/vagrant/*.dmg
 # Keep only the pinned Ubuntu installer in Git.
 vendor/vagrant/*.deb
 !vendor/vagrant/vagrant_2.4.9-1_amd64.deb
+
+# Imported remote cluster credentials
+.connections/
