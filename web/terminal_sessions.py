@@ -128,3 +128,15 @@ def reap():
                 if time.monotonic()-session.touched>1800: SESSIONS.pop(key).close()
 atexit.register(cleanup)
 threading.Thread(target=reap,daemon=True).start()
+
+
+def preferred_shell(root, env, namespace, pod, container):
+    """Fallback only when bash is missing, never for an API or permission error."""
+    command = [str(root/'kubectl.sh'), '--request-timeout=5s', 'exec', '-n', namespace, pod, '-c', container, '--', 'bash', '-c', ':']
+    result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=8)
+    if result.returncode == 0:
+        return 'bash'
+    error = result.stderr + result.stdout
+    if 'bash' in error and any(reason in error for reason in ('executable file not found', 'no such file or directory', 'executable not found')):
+        return 'sh'
+    raise ValueError(error.strip()[:1000] or 'Unable to check container shell')

@@ -607,14 +607,19 @@ class Handler(BaseHTTPRequestHandler):
                     mode=data.get('mode','shell')
                     if mode=='logs':args=['logs','-f','--tail=200','--timestamps','-n',ns,name,'-c',container]
                     elif mode=='shell':
-                        shell=data.get('shell','sh')
+                        shell=data.get('shell','bash')
                         if shell not in ('sh','bash'):raise ValueError('Выберите sh или bash')
+                        if shell == 'bash':
+                            shell = terminal_sessions.preferred_shell(active_root(), cluster_env(active_root()), ns, name, container)
                         args=['exec','-it','-n',ns,name,'-c',container,'--',shell]
                     else:raise ValueError('Неизвестный режим дебага')
                     data['_command']=[str(active_root()/'kubectl.sh')]+args
                 env = cluster_env(active_root())
                 env['PATH'] = str(ROOT / '.tools') + ':' + env['PATH']
-                return self.reply(200, terminal_sessions.handle(data, active_root(), env))
+                result = terminal_sessions.handle(data, active_root(), env)
+                if data.get('operation') == 'open' and data.get('pod') and data.get('mode', 'shell') == 'shell':
+                    result['shell'] = shell
+                return self.reply(200, result)
             if self.path == '/api/kubectl':
                 return self.reply(200, run_kubectl(data.get('command')))
             if self.path == '/api/clusters':
