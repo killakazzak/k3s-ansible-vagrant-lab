@@ -1,5 +1,6 @@
 """Exclude UTM-only plugin blocks from the pinned Bento VirtualBox build."""
 import sys
+import re
 from pathlib import Path
 root = Path(sys.argv[1]) / 'packer_templates'
 for filename, start in [('pkr-plugins.pkr.hcl', '    utm = {'), ('pkr-sources.pkr.hcl', 'source "utm-iso" "vm" {'), ('pkr-builder.pkr.hcl', '  post-processor "utm-vagrant" {')]:
@@ -15,12 +16,12 @@ for filename, start in [('pkr-plugins.pkr.hcl', '    utm = {'), ('pkr-sources.pk
         if text[end] == '}': depth -= 1
         end += 1
     path.write_text(text[:begin] + text[end:])
-# ARM VirtualBox uses IDE; x86_64 uses the original IDE Controller name.
-# Normalize both pristine templates and previously patched cached templates.
+# Packer configures the disk/ISO controllers. Do not remove optional IDE
+# controllers: some VirtualBox builds create only SATA. Preserve SATA and
+# all unrelated commands; also normalize older patched cached templates.
 path = root / 'pkr-sources.pkr.hcl'
 text = path.read_text()
-for controller in ('IDE Controller', 'IDE'):
-    text = text.replace('"' + controller + '", "--remove"', '(var.os_arch == "aarch64" ? "IDE" : "IDE Controller"), "--remove"')
+text = re.sub(r'^\s*\["storagectl",\s*"\{\{\.Name\}\}",\s*"--name",[^\n]*"IDE[^\n]*"--remove"\],?[^\S\n]*$', '', text, flags=re.MULTILINE)
 path.write_text(text)
 # Resolve guest NAT DNS through macOS (including its VPN resolver).
 text = path.read_text()
