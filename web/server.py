@@ -253,15 +253,24 @@ def status():
     if not result['nodes']:
         result['exists'] = False
         return result
-    try:
-        output = capture(['vagrant', 'status', '--machine-readable'], 20)
-        states = {line.split(',')[1]: line.split(',')[3] for line in output.splitlines() if len(line.split(',')) >= 4 and line.split(',')[2] == 'state'}
-        for node in result['nodes']:
-            node['vm_state'] = states.get(node['vagrant_id'], 'unknown')
-        result['exists'] = any(n['vm_state'] != 'not_created' for n in result['nodes'])
-    except Exception:
-        result['exists'] = None
-        for node in result['nodes']: node['vm_state'] = 'unknown'
+    # UI polling must not enter Vagrant's machine locks during vagrant up.
+    for node in result['nodes']:
+        id_path=active_root()/'.vagrant/machines'/node['vagrant_id']/result['provider']/'id'
+        try:
+            if not id_path.is_file():
+                node['vm_state']='not_created'
+                continue
+            uuid=id_path.read_text().strip()
+            if result['provider'] != 'virtualbox' or not re.fullmatch(r'[a-fA-F0-9-]{36}',uuid):
+                node['vm_state']='unknown'
+                continue
+            output=capture(['VBoxManage','showvminfo',uuid,'--machinereadable'],5)
+            match=re.search(r'^VMState="([^"\n]+)"',output,re.MULTILINE)
+            node['vm_state']=match.group(1) if match else 'unknown'
+        except Exception:
+            node['vm_state']='unknown'
+    states=[n['vm_state'] for n in result['nodes']]
+    result['exists']=None if 'unknown' in states else any(s != 'not_created' for s in states)
     if result['exists'] is False:
         for node in result['nodes']: node['state'] = 'Absent'
         return result
