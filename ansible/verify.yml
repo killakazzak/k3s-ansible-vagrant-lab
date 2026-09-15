@@ -137,6 +137,20 @@
           loop_control:
             label: "{{ item.spec.nodeName }} / {{ item.status.podIP }}"
           changed_when: false
+      rescue:
+        - name: Collect failed test pod diagnostics
+          ansible.builtin.command: kubectl -n {{ smoke_namespace }} get pods -o wide
+          register: smoke_failed_pods
+          changed_when: false
+          failed_when: false
+        - name: Collect failed test events
+          ansible.builtin.command: kubectl -n {{ smoke_namespace }} get events --sort-by=.lastTimestamp
+          register: smoke_failed_events
+          changed_when: false
+          failed_when: false
+        - name: Explain failed network check
+          ansible.builtin.fail:
+            msg: "Проверка сети не пройдена; созданные узлы сохранены. Pod: {{ smoke_failed_pods.stdout }}. События: {{ smoke_failed_events.stdout }}"
       always:
         - name: Remove temporary test namespace
           ansible.builtin.command: kubectl delete namespace {{ smoke_namespace }} --ignore-not-found --wait=false

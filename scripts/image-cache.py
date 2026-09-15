@@ -80,6 +80,7 @@ def canonical(ref):
 
 def restore(root,images):
     wanted={canonical(v) for v in images}
+    if not wanted:return
     with connections(root) as (ssh,nodes):
         for node in nodes:
             arch=node_arch(ssh(node))
@@ -92,10 +93,13 @@ def restore(root,images):
                 present.update(refs)
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('operation',choices=['capture','restore','list']);parser.add_argument('--cluster',default=os.getcwd());parser.add_argument('--arch',choices=['arm64','amd64'],default='arm64');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('operation',choices=['capture','restore','restore-rancher','list']);parser.add_argument('--cluster',default=os.getcwd());parser.add_argument('--arch',choices=['arm64','amd64'],default='arm64');args=parser.parse_args()
     if args.operation=='list':print(json.dumps([str(p) for p,_ in entries(args.arch)]));return
     if os.environ.get('K3S_LAB_IMAGE_CACHE','1')=='0':return
     root=Path(args.cluster).absolute()
     if args.operation=='capture':capture(root)
+    elif args.operation=='restore-rancher':
+        refs=[ref for _,data in entries(args.arch) for ref in data['refs'] if ref.startswith(('docker.io/rancher/','quay.io/jetstack/'))]
+        restore(root,refs)
     else:restore(root,json.load(__import__('sys').stdin))
 if __name__=='__main__':main()

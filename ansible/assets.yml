@@ -75,21 +75,6 @@
     - name: Select container archives for chosen components
       ansible.builtin.set_fact:
         cached_image_archives: "{{ ([offline_bundle + '/images/k3s-airgap-images-arm64.tar.zst'] + (lookup('fileglob', offline_bundle + '/images/*.tar', wantlist=True) if rancher_enabled | bool else [])) if use_offline_bundle | bool else [asset_cache + '/k3s-airgap-images-arm64.tar.zst'] }}"
-    - name: Verify persistent host image cache
-      ansible.builtin.command:
-        argv:
-          - "{{ ansible_playbook_python }}"
-          - "{{ playbook_dir }}/../scripts/image-cache.py"
-          - list
-          - --arch
-          - arm64
-      register: persistent_images
-      changed_when: false
-      when: lookup('env', 'K3S_LAB_IMAGE_CACHE') != '0' and rancher_enabled | bool
-    - name: Include host archives for VM recreation
-      ansible.builtin.set_fact:
-        cached_image_archives: "{{ cached_image_archives + (persistent_images.stdout | from_json) }}"
-      when: lookup('env', 'K3S_LAB_IMAGE_CACHE') != '0' and rancher_enabled | bool
     - name: "Загрузка Helm charts Rancher {{ rancher_version }} и cert-manager {{ cert_manager_version }}"
       when: rancher_enabled | bool and not use_offline_bundle | bool
       register: asset_download_result

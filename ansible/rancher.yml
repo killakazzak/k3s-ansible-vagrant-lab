@@ -15,6 +15,22 @@
               - rancher_replicas | int >= 1
               - k3s_version is match('^v1[.](34|35|36)[.]')
             fail_msg: This Rancher profile requires Traefik, ServiceLB and k3s 1.34–1.36. Check the support matrix before changing versions.
+        - name: Stream missing Rancher images from host cache
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_playbook_python }}"
+              - "{{ playbook_dir }}/../scripts/image-cache.py"
+              - restore-rancher
+              - --cluster
+              - "{{ playbook_dir }}/.."
+          delegate_to: localhost
+          become: false
+          changed_when: false
+          register: rancher_image_cache
+          failed_when: false
+        - name: Show cache import result
+          ansible.builtin.debug:
+            msg: "{{ rancher_image_cache.stdout_lines | default([]) }}"
         - name: Install pinned cert-manager chart
           ansible.builtin.command: k3s kubectl apply -f -
           args:
