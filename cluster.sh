@@ -10,11 +10,13 @@ if [[ "$LAB_HOST_OS" == linux ]]; then
     menu|web|web-start)
       "$ROOT/scripts/install-vagrant.sh"
       "$ROOT/scripts/install-ansible.sh"
-      "$ROOT/scripts/install-virtualbox.sh"
       hash -r
       ;;
   esac
 fi
+case "${1:-menu}" in
+  menu|web|web-start) "$ROOT/scripts/install-virtualbox.sh" ;;
+esac
 export PATH="$ROOT/.offline-venv/bin:$PATH"
 if [[ "${1:-}" == "--cluster" ]]; then
   name="${2:-}"

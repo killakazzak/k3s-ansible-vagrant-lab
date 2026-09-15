@@ -25,7 +25,7 @@ if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--verify" ) ]]; then
   echo 'Unknown option; use --help.' >&2; exit 2
 fi
 if ruby -ryaml -e 'g=YAML.load_file("ansible/inventory.yml").fetch("all").fetch("children"); exit(g.values.all? { |v| v.fetch("hosts").empty? } ? 0 : 1)'; then
-  echo 'Кластер ещё не создан. Выполните ./cluster.sh: пункт 1 — создать кластер, пункт 12 — открыть веб-интерфейс и выбрать «Новый кластер».'
+  echo 'Кластер ещё не создан. Выполните ./cluster.sh: пункт 4 — создать кластер, пункт 1 — открыть веб-интерфейс и выбрать «Новый кластер».'
   exit 1
 fi
 if [[ "$LAB_HOST_OS" == darwin && -d "$ROOT/vendor/offline" ]]; then

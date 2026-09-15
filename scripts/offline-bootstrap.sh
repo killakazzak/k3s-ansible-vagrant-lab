@@ -47,6 +47,9 @@ if ! command -v vagrant >/dev/null; then
   "$ROOT/scripts/install-vagrant.sh"
 fi
 if ! command -v VBoxManage >/dev/null; then
+  [[ -t 0 ]] || { echo 'VirtualBox requires confirmation in an interactive terminal.' >&2; exit 1; }
+  read -r -p 'Install VirtualBox from the offline bundle? 1 = install, Enter = cancel: ' vbox_answer
+  [[ "$vbox_answer" == 1 ]] || { echo 'VirtualBox installation cancelled.'; exit 1; }
   require_admin
   MOUNT="$(mktemp -d)"
   hdiutil attach "$BUNDLE/host/VirtualBox.dmg" -mountpoint "$MOUNT" -nobrowse -quiet
