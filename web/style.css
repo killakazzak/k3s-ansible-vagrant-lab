@@ -125,3 +125,5 @@
 .debug-dialog .debug-hint{font-size:10px;color:#8b9b91;margin:0}
 .debug-dialog .modalfooter{padding-top:12px;margin-top:0;flex-shrink:0}.debug-dialog .modalfooter .button{padding:7px 14px;font-size:12px}
 @media(max-width:650px){#lab-dialog.debug-dialog{padding:14px}.debug-dialog .debug-log-toolbar{flex-wrap:wrap}.debug-dialog .debug-log-toolbar input[type=search]{flex-basis:100%}.debug-dialog .debug-status{margin-left:0}}
+
+.debug-dialog .debug-export-bar{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}.debug-dialog .debug-export-bar[hidden]{display:none}.debug-dialog .debug-export-caption{font-size:10px;color:#81958a;margin-right:auto}.debug-dialog #lab-extra .debug-export-bar .button{padding:5px 9px;font-size:10px;background:#f7faf8}

@@ -287,8 +287,20 @@ async function openPodDebug(pod){
  const controls=element('div',undefined,'debug-connect-controls');const toolbar=element('div',undefined,'debug-log-toolbar');
  const query=document.createElement('input');query.type='search';query.placeholder='Фильтр логов: текст, ошибка, request ID…';query.setAttribute('aria-label','Фильтр строк логов');
  const count=element('span','0 строк','debug-log-count');const follow=document.createElement('input');follow.type='checkbox';follow.checked=true;const followLabel=element('label',undefined,'debug-follow');followLabel.append(follow,document.createTextNode('Автопрокрутка'));toolbar.append(query,count,followLabel);
- let text='';const renderLogs=()=>{const lines=debugLogLines(text,query.value);logOutput.textContent=lines.join('\n');count.textContent=(query.value?lines.length+' / ':'')+(text?text.split('\n').length:0)+' строк';if(follow.checked)logOutput.scrollTop=logOutput.scrollHeight};query.oninput=renderLogs;follow.onchange=renderLogs;
+ let text='';const renderLogs=()=>{const lines=debugLogLines(text,query.value);logOutput.textContent=lines.join('\n');count.textContent=(query.value?lines.length+' / ':'')+(text?text.split('\n').length:0)+' строк';if(follow.checked)logOutput.scrollTop=logOutput.scrollHeight;exportAll.disabled=!text;exportFiltered.disabled=!lines.some(line=>line.length)};query.oninput=renderLogs;follow.onchange=renderLogs;
  const clear=resourceButton('Очистить',()=>{text='';renderLogs()},'button secondary');toolbar.append(clear);
+ const downloadLogs=filtered=>{
+  const output=filtered?debugLogLines(text,query.value).join('\n'):text;
+  if(!output)return;
+  const safe=value=>String(value||'unknown').replace(/[^a-zA-Z0-9._-]/g,'_');
+  const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+  const filename=[labCluster,pod.namespace,pod.name,container.value,filtered?'filtered':'buffer',stamp].map(safe).join('_')+'.log';
+  const url=URL.createObjectURL(new Blob([output],{type:'text/plain;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=filename;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);
+ };
+ const exportAll=resourceButton('↓ Скачать .log',()=>downloadLogs(false),'button secondary');exportAll.title='Скачать весь загруженный буфер логов';exportAll.disabled=true;
+ const exportFiltered=resourceButton('↓ По фильтру',()=>downloadLogs(true),'button secondary');exportFiltered.title='Скачать только строки, соответствующие текущему фильтру';exportFiltered.disabled=true;
+ const exportBar=element('div',undefined,'debug-export-bar');exportBar.append(element('span','Экспорт UTF-8 · загруженные строки','debug-export-caption'),exportAll,exportFiltered);
+
  const stop=resourceButton('Отключить',async()=>{await closePodDebug();status.textContent='Отключено';stop.disabled=true});stop.disabled=true;
  const start=resourceButton('Подключиться',async()=>{start.disabled=true;container.disabled=true;mode.disabled=true;shell.disabled=true;
  try{sameCluster();await closePodDebug();text='';host.replaceChildren();const cluster=selectedCluster,sessionMode=mode.value;const result=await terminalApi(cluster,{operation:'open',pod:pod.name,namespace:pod.namespace,container:container.value,mode:sessionMode,shell:shell.value});if(!host.isConnected||cluster!==selectedCluster){await terminalApi(cluster,{operation:'close',id:result.id});return}
@@ -301,8 +313,8 @@ async function openPodDebug(pod){
  }
  (async()=>{let offset=0;const decoder=new TextDecoder();try{while(!session.closed){const result=await terminalApi(cluster,{operation:'poll',id:session.id,offset});if(session.closed)break;offset=result.offset;if(result.output){const bytes=Uint8Array.from(atob(result.output),c=>c.charCodeAt(0));if(session.term)session.term.write(bytes);else{text+=decoder.decode(bytes,{stream:true}).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').replace(/\r/g,'');text=text.split('\n').slice(-10000).join('\n').slice(-2000000);renderLogs()}}if(result.finished){status.textContent='Сессия завершена · можно подключиться повторно';stop.disabled=true;await closePodDebug();break}}}catch(e){if(!session.closed)status.textContent=e.message}})();
  }catch(e){status.textContent=e.message;await closePodDebug();stop.disabled=true}finally{if(host.isConnected){start.disabled=false;container.disabled=false;mode.disabled=false;shell.disabled=false}}},'button primary');
- const updateMode=()=>{const logs=mode.value==='logs';shell.parentElement.hidden=logs;toolbar.hidden=!logs;host.classList.toggle('logs-mode',logs)};
+ const updateMode=()=>{const logs=mode.value==='logs';shell.parentElement.hidden=logs;toolbar.hidden=!logs;exportBar.hidden=!logs;host.classList.toggle('logs-mode',logs)};
  const change=async()=>{await closePodDebug();stop.disabled=true;host.replaceChildren(logOutput);text='';renderLogs();updateMode();status.textContent='Настройки изменены · нажмите «Подключиться»'};mode.onchange=change;container.onchange=change;shell.onchange=change;updateMode();
- controls.append(start,stop,status);$('lab-extra').append(controls,toolbar,host,element('p','До 10 000 последних строк · фильтр работает по тексту без учёта регистра. Размер окна можно менять за нижний правый угол.','debug-hint'));start.disabled=true;
+ controls.append(start,stop,status);$('lab-extra').append(controls,toolbar,exportBar,host,element('p','Буфер: до 10 000 строк / 2 млн символов. Экспорт сохраняет только загруженный буфер, не всю историю контейнера. Размер окна можно менять за нижний правый угол.','debug-hint'));start.disabled=true;
  try{const data=await api('pod',{name:pod.name,namespace:pod.namespace});if(!host.isConnected)return;for(const name of data.containers){const option=element('option',name);option.value=name;container.append(option)}start.disabled=!data.containers.length;status.textContent=data.containers.length?'Готово к подключению':'Контейнеры не найдены'}catch(e){status.textContent=e.message}
 }
