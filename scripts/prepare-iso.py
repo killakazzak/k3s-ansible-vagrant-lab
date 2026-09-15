@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fetch Bento's ISO visibly, resume partial downloads, verify before Packer."""
-import hashlib,json,re,subprocess,sys,time
+import hashlib,json,re,subprocess,sys,time,fcntl,shutil,os,tempfile
 from pathlib import Path
 
 def digest(path):
@@ -9,7 +9,37 @@ def digest(path):
         for block in iter(lambda:stream.read(4*1024*1024),b''):h.update(block)
     return h.hexdigest()
 
+def migrate_legacy(cache, expected, name, project=None):
+    project=project or Path(__file__).resolve().parents[1]
+    bases=[project/'.cache/box25/iso', *project.glob('.clusters/*/.cache/box25/iso')]
+    destination=cache/expected[:16]/name
+    destination.parent.mkdir(parents=True,exist_ok=True)
+    for base in bases:
+        source=base/expected[:16]/name
+        if source.resolve()==destination.resolve():continue
+        if source.is_file() and not source.is_symlink() and not destination.exists() and digest(source)==expected:
+            fd,temporary=tempfile.mkstemp(prefix='.migrate-',dir=destination.parent);os.close(fd)
+            try:
+                shutil.copyfile(source,temporary)
+                if digest(Path(temporary))!=expected:raise ValueError('ISO migration checksum mismatch')
+                os.replace(temporary,destination)
+                source.unlink()
+                print('[ISO] Moved verified ISO to shared cache: '+str(destination),flush=True)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+        old_partial=source.with_name(name+'.part');new_partial=destination.with_name(name+'.part')
+        if not destination.exists() and not new_partial.exists() and old_partial.is_file() and not old_partial.is_symlink():
+            shutil.move(str(old_partial),str(new_partial))
+            print('[ISO] Moved partial download to shared cache: '+str(new_partial),flush=True)
+
 def main():
+    cache=Path(sys.argv[2]);cache.mkdir(parents=True,exist_ok=True)
+    with (cache/'.download.lock').open('a') as lock:
+        print('[ISO] Shared cache: '+str(cache.resolve()),flush=True)
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        prepare()
+
+def prepare():
     variables,cache,output=map(Path,sys.argv[1:])
     text=variables.read_text()
     def value(key):
@@ -30,6 +60,7 @@ def main():
     else:expected=checksum.removeprefix('sha256:')
     if not re.fullmatch('[a-fA-F0-9]{64}',expected):raise ValueError('Invalid ISO SHA256')
     expected=expected.lower();folder=cache/expected[:16];folder.mkdir(exist_ok=True)
+    migrate_legacy(cache,expected,name)
     iso=folder/name;partial=folder/(name+'.part')
     if iso.exists() and digest(iso)==expected:
         print('[ISO] Verified cached image: '+str(iso),flush=True)

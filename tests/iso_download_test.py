@@ -19,3 +19,19 @@ with tempfile.TemporaryDirectory() as d:
   except ValueError as e:assert 'checksum mismatch' in str(e)
  assert not Path(result['iso_url']).exists()
 print('ISO download: local file, verified cache and corrupt image rejection passed')
+with tempfile.TemporaryDirectory() as d:
+ root=Path(d);project=root/'project';cache=root/'shared';data=b'cached Ubuntu';sha=hashlib.sha256(data).hexdigest();name='ubuntu.iso'
+ old=project/'.clusters/k8s-cluster1/.cache/box25/iso'/sha[:16]/name;old.parent.mkdir(parents=True);old.write_bytes(data)
+ m.migrate_legacy(cache,sha,name,project)
+ target=cache/sha[:16]/name
+ assert target.read_bytes()==data and not old.exists()
+ import shutil
+ shutil.rmtree(project)
+ assert target.read_bytes()==data
+ project.mkdir();old=project/'.cache/box25/iso'/sha[:16]/name;old.parent.mkdir(parents=True);old.write_bytes(b'bad')
+ target.unlink();m.migrate_legacy(cache,sha,name,project)
+ assert not target.exists() and old.exists()
+ old.unlink();partial=old.with_name(name+'.part');partial.write_bytes(b'cached')
+ m.migrate_legacy(cache,sha,name,project)
+ assert target.with_name(name+'.part').read_bytes()==b'cached' and not partial.exists()
+print('Shared cache migration: checksum, partial download and survival after project deletion passed')
