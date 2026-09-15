@@ -164,41 +164,47 @@ function renderResourceDetail(item){
  const actions=element('div',undefined,'pod-detail-actions');actions.append(resourceButton('Онлайн-дебаг',()=>openPodDebug(item),'button primary'),resourceButton('Логи и события',()=>showPodDiagnostics(item),'button secondary'));body.append(actions);
  const extra=document.createElement('details');extra.className='pod-detail-extra';extra.open=!!resourceSelected.expanded;const summary=element('summary');const caption=element('span');caption.append(element('strong','Технические подробности'),element('small','Состояния контейнеров и метки'));summary.append(caption);extra.append(summary,element('pre',JSON.stringify({statuses:item.statuses,labels:item.labels},null,2),'diagnostic-output'));extra.ontoggle=()=>{if(extra.isConnected&&resourceSelected)resourceSelected.expanded=extra.open};body.append(extra);
 }
-const podFilterBar=element('div',undefined,'pod-filter-bar');podFilterBar.id='pod-filter-bar';
-const podSortGroup=element('div',undefined,'pod-sort-group');
-for(const [key,label] of [['podStatus','Статус'],['podContainer','Контейнер'],['podNode','Узел'],['podSort','Сортировка']]){
- const field=element('label',undefined,'pod-filter-field');field.append(element('span',label));const select=document.createElement('select');select.id='filter-'+key;select.onchange=()=>{resourceFilter()[key]=select.value;renderResources(true)};field.append(select);(key==='podSort'?podSortGroup:podFilterBar).append(field);
-}
-const podDirection=resourceButton('↑ А–Я',()=>{const f=resourceFilter();f.podDirection=f.podDirection==='desc'?'asc':'desc';renderResources(true)},'button secondary');podDirection.id='pod-sort-direction';podSortGroup.append(podDirection);podFilterBar.append(podSortGroup);
-const podReset=resourceButton('Сбросить',()=>{Object.assign(resourceFilter(),{podStatus:'',podContainer:'',podNode:'',podSort:'name',podDirection:'asc'});renderResources(true)},'pod-filter-reset');podReset.id='pod-filter-reset';podFilterBar.append(podReset);
-$('resources').querySelector('.resource-toolbar').after(podFilterBar);
-function renderPodFilters(pods,filter){
- podFilterBar.hidden=resourceTab!=='pods';
+function podTableHead(pods,filter){
+ const head=document.createElement('thead'),row=document.createElement('tr');
  const scoped=pods.filter(p=>!filter.namespace||p.namespace===filter.namespace);
- const options={podStatus:[...new Set(scoped.flatMap(PodFilters.statuses))],podContainer:[...new Set(scoped.flatMap(PodFilters.containers))],podNode:[...new Set(scoped.map(PodFilters.node))]};
- for(const key of Object.keys(options)){
-  const select=$('filter-'+key),values=['',...new Set([...options[key],...(filter[key]?[filter[key]]:[])].sort(PodFilters.compare))];
-  const signature=JSON.stringify(values);if(select.dataset.options!==signature){select.replaceChildren();for(const value of values){const option=element('option',value||({podStatus:'Все статусы',podContainer:'Все контейнеры',podNode:'Все узлы'}[key]));option.value=value;select.append(option)}select.dataset.options=signature}select.value=filter[key]||'';
+ const columns=[['Имя','name'],['Namespace',null,'namespace',pods.map(p=>p.namespace)],['Статус','status','podStatus',scoped.flatMap(PodFilters.statuses)],['Контейнеры','container','podContainer',scoped.flatMap(PodFilters.containers)],['Узел','node','podNode',scoped.map(PodFilters.node)],['Рестарты']];
+ for(const [label,sortKey,filterKey,values] of columns){
+  const th=document.createElement('th');th.scope='col';
+  if(sortKey){
+   const active=(filter.podSort||'name')===sortKey;
+   th.setAttribute('aria-sort',active?(filter.podDirection==='desc'?'descending':'ascending'):'none');
+   const button=resourceButton('',()=>{filter.podDirection=active&&filter.podDirection!=='desc'?'desc':'asc';filter.podSort=sortKey;renderResources(true)},'column-sort');
+   button.append(element('span',label),element('span',active?(filter.podDirection==='desc'?'↓':'↑'):'↕','column-sort-arrow'));button.title='Сортировать: '+label;th.append(button);
+  }else th.append(element('span',label,'column-heading'));
+  if(filterKey){
+   const select=document.createElement('select');select.id='column-'+filterKey;select.className='column-filter'+(filter[filterKey]?' active':'');select.setAttribute('aria-label','Фильтр: '+label);
+   for(const value of ['',...new Set([...values,...(filter[filterKey]?[filter[filterKey]]:[])].sort(PodFilters.compare))]){const option=element('option',value||'Все');option.value=value;select.append(option)}
+   select.value=filter[filterKey]||'';select.onchange=()=>{filter[filterKey]=select.value;renderResources(true);$('column-'+filterKey)?.focus()};th.append(select);
+  }
+  row.append(th);
  }
- const sort=$('filter-podSort');if(!sort.options.length)for(const [value,label] of [['name','Имя Pod'],['status','Статус'],['container','Имя контейнера'],['node','Узел']]){const option=element('option',label);option.value=value;sort.append(option)}sort.value=filter.podSort||'name';
- for(const key of Object.keys(options))$('filter-'+key).closest('label').classList.toggle('active',!!filter[key]);
- podReset.hidden=!filter.podStatus&&!filter.podContainer&&!filter.podNode&&(filter.podSort||'name')==='name'&&(filter.podDirection||'asc')==='asc';
- podDirection.textContent=filter.podDirection==='desc'?'↓':'↑';podDirection.title=filter.podDirection==='desc'?'По убыванию':'По возрастанию';podDirection.setAttribute('aria-label',filter.podDirection==='desc'?'По убыванию. Нажмите для сортировки по возрастанию':'По возрастанию. Нажмите для сортировки по убыванию');
+ head.append(row);return head;
 }
+const podReset=resourceButton('Сбросить фильтры',()=>{Object.assign(resourceFilter(),{podStatus:'',podContainer:'',podNode:'',podSort:'name',podDirection:'asc'});renderResources(true)},'column-reset');
+$('resource-summary').after(podReset);
 function renderResources(force=false){
+ if(!force&&document.activeElement?.classList.contains('column-filter'))return;
  const sets=resourceItems(),filter=resourceFilter();const signature=JSON.stringify([selectedCluster,resourceTab,resourceView,filter,sets]);if(!force&&signature===resourceSignature)return;resourceSignature=signature;
  const namespaces=[...new Set(Object.values(sets).flat().map(p=>p.namespace))].sort();const select=$('resource-namespace');select.replaceChildren();for(const ns of ['',...new Set([...namespaces,...(filter.namespace?[filter.namespace]:[])])]){const o=element('option',ns||'Все пространства');o.value=ns;select.append(o)}select.value=filter.namespace;if($('resource-search').value!==filter.search)$('resource-search').value=filter.search;
  for(const [type,label] of resourceTypes){const tab=$('resource-tab-'+type);tab.replaceChildren(element('span',label),element('span',String(sets[type].filter(p=>!filter.namespace||p.namespace===filter.namespace).length),'resource-tab-count'));tab.setAttribute('aria-selected',String(type===resourceTab));tab.tabIndex=type===resourceTab?0:-1;}
  $('resource-view-controls').hidden=resourceTab!=='pods';$('resource-table-view').setAttribute('aria-pressed',String(resourceView==='table'));$('resource-map-view').setAttribute('aria-pressed',String(resourceView==='map'));
- renderPodFilters(sets.pods,filter);
+ podReset.hidden=resourceTab!=='pods'||(!filter.podStatus&&!filter.podContainer&&!filter.podNode&&(filter.podSort||'name')==='name'&&(filter.podDirection||'asc')==='asc');
  const query=filter.search.toLowerCase();let items=sets[resourceTab].filter(p=>(!filter.namespace||p.namespace===filter.namespace)&&JSON.stringify(p).toLowerCase().includes(query));if(resourceTab==='pods')items=PodFilters.apply(items,filter);const content=$('resource-content');content.replaceChildren();
  $('resource-summary').textContent=`${items.length} из ${sets[resourceTab].length} · автообновление 15 с`;
  const errorText=!['pods','pvcs','secrets'].includes(resourceTab)?extraError:resourceTab==='pods'?(!graphData?$('graph-status').textContent:''):resourceTab==='pvcs'?$('pvc-list').textContent:$('secret-list').textContent;
- if(!items.length){content.append(element('p','Ресурсов по выбранным фильтрам нет.','resource-empty'));if(errorText&&/недоступ|ошиб|token|отказ/i.test(errorText))content.append(element('p',errorText,'error'));}
+ if(!items.length&&resourceTab!=='pods'){content.append(element('p','Ресурсов по выбранным фильтрам нет.','resource-empty'));if(errorText&&/недоступ|ошиб|token|отказ/i.test(errorText))content.append(element('p',errorText,'error'));}
  else if(resourceTab==='pods'&&resourceView==='map'){
+  const filterTable=document.createElement('table');filterTable.className='resource-table pod-map-filters';filterTable.append(podTableHead(sets.pods,filter));content.append(filterTable);
+  if(!items.length)content.append(element('p','Ресурсов по выбранным фильтрам нет.','resource-empty'));
   const map=element('div',undefined,'resource-map');const groups=[...new Set(items.map(p=>p.node||'Не назначен'))];for(const node of groups){const column=element('article',undefined,'placement-node');column.append(element('h3',node));for(const p of items.filter(p=>(p.node||'Не назначен')===node)){const b=resourceButton('',()=>showResource('pods',p),'placement-pod '+(p.ready?'ready':'waiting'));b.append(element('strong',p.name),element('span',p.namespace+' · '+PodFilters.status(p)));column.append(b)}map.append(column)}content.append(map);
  }else{
-  const table=document.createElement('table');table.className='resource-table';const head=document.createElement('thead'),tr=document.createElement('tr');const headers=resourceTab==='pods'?['Имя','Namespace','Статус','Контейнеры','Узел','Рестарты']:resourceTab==='pvcs'?['Имя','Namespace','Размер','Статус','Сервер']:resourceTab==='secrets'?['Имя','Namespace','Тип','Ключи']:['Имя','Namespace','Статус / тип','Сводка'];for(const h of headers)tr.append(element('th',h));head.append(tr);table.append(head);const tbody=document.createElement('tbody');
+  const table=document.createElement('table');table.className='resource-table';const head=document.createElement('thead'),tr=document.createElement('tr');const headers=resourceTab==='pods'?['Имя','Namespace','Статус','Контейнеры','Узел','Рестарты']:resourceTab==='pvcs'?['Имя','Namespace','Размер','Статус','Сервер']:resourceTab==='secrets'?['Имя','Namespace','Тип','Ключи']:['Имя','Namespace','Статус / тип','Сводка'];for(const h of headers)tr.append(element('th',h));head.append(tr);table.append(resourceTab==='pods'?podTableHead(sets.pods,filter):head);const tbody=document.createElement('tbody');
+  if(!items.length){const empty=document.createElement('tr'),cell=element('td','Ресурсов по выбранным фильтрам нет.','resource-empty');cell.colSpan=headers.length;empty.append(cell);tbody.append(empty);}
   for(const p of items){const row=document.createElement('tr');if(resourceSelected?.cluster===selectedCluster&&resourceSelected.type===resourceTab&&resourceSelected.key===resourceKey(p))row.className='selected';const name=document.createElement('td');const nameButton=resourceButton('',()=>showResource(resourceTab,p),'resource-name');const icon=element('span',{pods:'◇',pvcs:'▤',secrets:'⌘'}[resourceTab]||'▱','resource-type-icon');icon.setAttribute('aria-hidden','true');nameButton.append(icon,element('span',p.name));name.append(nameButton);row.append(name);const values=resourceTab==='pods'?[p.namespace,PodFilters.status(p),PodFilters.containers(p).join(', ')||'—',p.node||'Не назначен',String((p.statuses||[]).reduce((a,c)=>a+c.restarts,0))]:resourceTab==='pvcs'?[p.namespace,p.capacity,p.phase,p.location?.server||(p.location?.nodes||[]).map(n=>n.name).join(', ')||'—']:resourceTab==='secrets'?[p.namespace,p.type,p.keys.join(', ')]:[p.namespace,p.state,p.summary];for(const [index,value] of values.entries()){const td=element('td');const isStatus=(resourceTab==='pods'&&index===1)||(resourceTab==='pvcs'&&index===2);if(index===0)td.append(element('span',value,'resource-ns-chip'));else if(isStatus){const tone=['Ready','Bound','Succeeded'].includes(value)?'good':['Pending','Running'].includes(value)?'warn':'bad';td.append(element('span',value,'resource-status-chip '+tone))}else td.append(element('span',value));row.append(td)}row.onclick=e=>{if(!e.target.closest('button'))showResource(resourceTab,p)};tbody.append(row)}table.append(tbody);content.append(table);
  }
  if(resourceSelected){const selected=resourceSelected.cluster===selectedCluster&&sets[resourceSelected.type].find(p=>resourceKey(p)===resourceSelected.key);if(!selected){resourceSelected=null;$('resource-detail').hidden=true}else renderResourceDetail(selected);}
