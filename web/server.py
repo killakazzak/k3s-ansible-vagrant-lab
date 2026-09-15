@@ -455,10 +455,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        if path in ('/', '/app.js', '/style.css', '/vendor/xterm.js', '/vendor/xterm.css', '/vendor/addon-fit.js', '/graph.js', '/apps.js'):
+        if path in ('/', '/app.js', '/style.css', '/vendor/xterm.js', '/vendor/xterm.css', '/vendor/addon-fit.js', '/graph.js', '/apps.js', '/pod-filters.js'):
             if self.headers.get('Host') != '127.0.0.1:' + str(self.server.server_port):
                 return self.reply(403, {'error': 'Недопустимый Host'})
-            file, mime = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/vendor/xterm.js': ('vendor/xterm.js', 'text/javascript'), '/vendor/xterm.css': ('vendor/xterm.css', 'text/css'), '/vendor/addon-fit.js': ('vendor/addon-fit.js', 'text/javascript'), '/graph.js': ('graph.js', 'text/javascript'), '/apps.js': ('apps.js', 'text/javascript')}[path]
+            file, mime = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/vendor/xterm.js': ('vendor/xterm.js', 'text/javascript'), '/vendor/xterm.css': ('vendor/xterm.css', 'text/css'), '/vendor/addon-fit.js': ('vendor/addon-fit.js', 'text/javascript'), '/pod-filters.js': ('pod-filters.js', 'text/javascript'), '/graph.js': ('graph.js', 'text/javascript'), '/apps.js': ('apps.js', 'text/javascript')}[path]
             return self.reply(200, (ROOT / 'web' / file).read_bytes(), mime + '; charset=utf-8')
         if not self.allowed():
             return
