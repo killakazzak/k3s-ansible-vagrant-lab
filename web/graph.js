@@ -165,11 +165,12 @@ function renderResourceDetail(item){
  const extra=document.createElement('details');extra.className='pod-detail-extra';extra.open=!!resourceSelected.expanded;const summary=element('summary');const caption=element('span');caption.append(element('strong','Технические подробности'),element('small','Состояния контейнеров и метки'));summary.append(caption);extra.append(summary,element('pre',JSON.stringify({statuses:item.statuses,labels:item.labels},null,2),'diagnostic-output'));extra.ontoggle=()=>{if(extra.isConnected&&resourceSelected)resourceSelected.expanded=extra.open};body.append(extra);
 }
 const podFilterBar=element('div',undefined,'pod-filter-bar');podFilterBar.id='pod-filter-bar';
+const podSortGroup=element('div',undefined,'pod-sort-group');
 for(const [key,label] of [['podStatus','Статус'],['podContainer','Контейнер'],['podNode','Узел'],['podSort','Сортировка']]){
- const field=element('label',undefined,'pod-filter-field');field.append(element('span',label));const select=document.createElement('select');select.id='filter-'+key;select.onchange=()=>{resourceFilter()[key]=select.value;renderResources(true)};field.append(select);podFilterBar.append(field);
+ const field=element('label',undefined,'pod-filter-field');field.append(element('span',label));const select=document.createElement('select');select.id='filter-'+key;select.onchange=()=>{resourceFilter()[key]=select.value;renderResources(true)};field.append(select);(key==='podSort'?podSortGroup:podFilterBar).append(field);
 }
-const podDirection=resourceButton('↑ А–Я',()=>{const f=resourceFilter();f.podDirection=f.podDirection==='desc'?'asc':'desc';renderResources(true)},'button secondary');podDirection.id='pod-sort-direction';podFilterBar.append(podDirection);
-podFilterBar.append(resourceButton('Сбросить',()=>{Object.assign(resourceFilter(),{podStatus:'',podContainer:'',podNode:'',podSort:'name',podDirection:'asc'});renderResources(true)},'button secondary'));
+const podDirection=resourceButton('↑ А–Я',()=>{const f=resourceFilter();f.podDirection=f.podDirection==='desc'?'asc':'desc';renderResources(true)},'button secondary');podDirection.id='pod-sort-direction';podSortGroup.append(podDirection);podFilterBar.append(podSortGroup);
+const podReset=resourceButton('Сбросить',()=>{Object.assign(resourceFilter(),{podStatus:'',podContainer:'',podNode:'',podSort:'name',podDirection:'asc'});renderResources(true)},'pod-filter-reset');podReset.id='pod-filter-reset';podFilterBar.append(podReset);
 $('resources').querySelector('.resource-toolbar').after(podFilterBar);
 function renderPodFilters(pods,filter){
  podFilterBar.hidden=resourceTab!=='pods';
@@ -177,10 +178,12 @@ function renderPodFilters(pods,filter){
  const options={podStatus:[...new Set(scoped.flatMap(PodFilters.statuses))],podContainer:[...new Set(scoped.flatMap(PodFilters.containers))],podNode:[...new Set(scoped.map(PodFilters.node))]};
  for(const key of Object.keys(options)){
   const select=$('filter-'+key),values=['',...new Set([...options[key],...(filter[key]?[filter[key]]:[])].sort(PodFilters.compare))];
-  const signature=JSON.stringify(values);if(select.dataset.options!==signature){select.replaceChildren();for(const value of values){const option=element('option',value||'Все');option.value=value;select.append(option)}select.dataset.options=signature}select.value=filter[key]||'';
+  const signature=JSON.stringify(values);if(select.dataset.options!==signature){select.replaceChildren();for(const value of values){const option=element('option',value||({podStatus:'Все статусы',podContainer:'Все контейнеры',podNode:'Все узлы'}[key]));option.value=value;select.append(option)}select.dataset.options=signature}select.value=filter[key]||'';
  }
  const sort=$('filter-podSort');if(!sort.options.length)for(const [value,label] of [['name','Имя Pod'],['status','Статус'],['container','Имя контейнера'],['node','Узел']]){const option=element('option',label);option.value=value;sort.append(option)}sort.value=filter.podSort||'name';
- podDirection.textContent=filter.podDirection==='desc'?'↓ Я–А':'↑ А–Я';podDirection.setAttribute('aria-label',filter.podDirection==='desc'?'По убыванию. Нажмите для сортировки по возрастанию':'По возрастанию. Нажмите для сортировки по убыванию');
+ for(const key of Object.keys(options))$('filter-'+key).closest('label').classList.toggle('active',!!filter[key]);
+ podReset.hidden=!filter.podStatus&&!filter.podContainer&&!filter.podNode&&(filter.podSort||'name')==='name'&&(filter.podDirection||'asc')==='asc';
+ podDirection.textContent=filter.podDirection==='desc'?'↓':'↑';podDirection.title=filter.podDirection==='desc'?'По убыванию':'По возрастанию';podDirection.setAttribute('aria-label',filter.podDirection==='desc'?'По убыванию. Нажмите для сортировки по возрастанию':'По возрастанию. Нажмите для сортировки по убыванию');
 }
 function renderResources(force=false){
  const sets=resourceItems(),filter=resourceFilter();const signature=JSON.stringify([selectedCluster,resourceTab,resourceView,filter,sets]);if(!force&&signature===resourceSignature)return;resourceSignature=signature;
