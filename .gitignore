@@ -37,8 +37,9 @@ __pycache__/
 vendor/offline/
 .offline-venv/
 
-# Installers live in Releases and the local cache
+# Keep the pinned macOS installer in Git.
 vendor/vagrant/*.dmg
+!vendor/vagrant/vagrant_2.4.9_darwin_arm64.dmg
 
 # Keep only the pinned Ubuntu installer in Git.
 vendor/vagrant/*.deb

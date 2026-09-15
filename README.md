@@ -278,7 +278,7 @@ Traefik обслуживает Ingress на портах 80/443, в том чи�
 
 ## Vagrant включён в репозиторий
 
-Официальный установщик **Vagrant 2.4.9 для macOS Apple Silicon** хранится в [GitHub Releases](https://github.com/killakazzak/k3s-ansible-vagrant-lab/releases/tag/vagrant-2.4.9). Если Vagrant отсутствует, скрипт скачивает DMG один раз в общий `.cache/installers` и проверяет SHA256 и подпись HashiCorp. Установщик не включён в текущее дерево Git. Для новой загрузки без старых бинарников из истории используйте `git clone --depth 1 https://github.com/killakazzak/k3s-ansible-vagrant-lab.git`.
+Официальные установщики Vagrant 2.4.9 включены в Git: `vendor/vagrant/vagrant_2.4.9_darwin_arm64.dmg` для Mac Apple Silicon (54 МиБ) и `vendor/vagrant/vagrant_2.4.9-1_amd64.deb` для Ubuntu x86_64 (86 МиБ). После clone/pull скрипт использует локальный пакет, проверяет SHA256 и, на macOS, подпись HashiCorp. Копии также доступны в [GitHub Releases](https://github.com/killakazzak/k3s-ansible-vagrant-lab/releases/tag/vagrant-2.4.9).
 
 При создании кластера из меню или через `./cluster.sh up --verify` скрипт проверяет наличие Vagrant. Если его нет, проверяет SHA256 дистрибутива, монтирует DMG, проверяет подпись HashiCorp и запускает системный установщик macOS. Для установки потребуется пароль администратора Mac. Если Vagrant уже установлен, он сохраняется без переустановки и смены версии.
 

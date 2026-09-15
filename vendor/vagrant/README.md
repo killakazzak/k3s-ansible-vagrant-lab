@@ -1,4 +1,4 @@
-# Vagrant для Apple Silicon
+# Установщики Vagrant для macOS и Ubuntu
 
 Оригинальный, неизменённый установщик HashiCorp Vagrant **2.4.9**, macOS ARM64.
 
@@ -9,11 +9,11 @@
 - Подписант PKG: `Hashicorp, Inc. (D38WU7D763)`; при проверке macOS подтвердила нотариальное заверение Apple.
 - Лицензия поставщика сохранена в `LICENSE`; источник: https://github.com/hashicorp/vagrant/blob/v2.4.9/LICENSE.
 
-Установщик опубликован в [GitHub Release vagrant-2.4.9](https://github.com/killakazzak/k3s-ansible-vagrant-lab/releases/tag/vagrant-2.4.9), а не в текущем дереве Git.
-`scripts/install-vagrant.sh` скачивает его только при отсутствии Vagrant и сохраняет в `.cache/installers` корневого проекта. Повторные установки используют кеш.
-`--check` проверяет SHA256 и подпись без установки. Для полностью офлайн-установки заранее выполните эту команду или перенесите проверенный DMG в `.cache/installers`.
+Установщик включён в Git: `vendor/vagrant/vagrant_2.4.9_darwin_arm64.dmg`. Копия опубликована в [GitHub Release vagrant-2.4.9](https://github.com/killakazzak/k3s-ansible-vagrant-lab/releases/tag/vagrant-2.4.9).
+`scripts/install-vagrant.sh` при отсутствии Vagrant использует локальный DMG из `vendor/vagrant`, сохраняя копию в `.cache/installers`. Загрузка из Release нужна только если локального файла нет.
+`--check` проверяет SHA256 и подпись без установки. DMG доступен после clone/pull; отдельно скачивать Vagrant не требуется.
 
-При смене версии опубликуйте оригинальный DMG в release `vagrant-<версия>` и обновите `vagrant_version`, `vagrant_installer_sha256` и официальный SHA256SUMS в Git.
+При смене версии замените DMG в Git и исключение в `.gitignore`, опубликуйте оригинальный DMG в release `vagrant-<версия>` и обновите `vagrant_version`, `vagrant_installer_sha256` и официальный SHA256SUMS в Git.
 
 ## Ubuntu 22.04 x86_64
 
