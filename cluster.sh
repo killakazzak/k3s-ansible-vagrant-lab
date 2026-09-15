@@ -53,6 +53,7 @@ case "$command_name" in
     [[ $# -eq 0 ]] || { usage >&2; exit 2; }
     "$ROOT/scripts/install-vagrant.sh" || echo "Vagrant: требуется установка через меню окружения."
     "$ROOT/scripts/install-ansible.sh" || echo "Ansible: требуется установка через меню окружения."
+    ruby "$ROOT/scripts/environment.rb" || echo "Окружение требует внимания: пункт 20 — установка недостающих компонентов."
     if python3 "$ROOT/scripts/web-service.py" start; then
       export K3S_LAB_WEB_LINK_SHOWN=1
     else
