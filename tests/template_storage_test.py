@@ -45,3 +45,13 @@ class TemplateStorageTests(unittest.TestCase):
   workload=dict(kind='StatefulSet',metadata=dict(name='db'),spec=dict(replicas=0,volumeClaimTemplates=[dict(metadata=dict(name='data'))]))
   self.assertTrue(lab.claim_referenced('data-db-0',[workload]))
   self.assertFalse(lab.claim_referenced('data-db-2-other',[workload]))
+
+ def test_storage_check_reports_new_pvc_collision_without_mutation(self):
+  app=lab.Apps('/tmp')
+  with patch.object(app,'find',return_value={'kind':'PersistentVolumeClaim'}),patch.object(app,'apply') as apply:
+   with self.assertRaisesRegex(ValueError,'PVC dev/data-postgres-0 уже существует'):app.check_storage(dict(type='postgres',name='postgres'))
+   apply.assert_not_called()
+ def test_no_storage_check_needs_no_cluster_access(self):
+  app=lab.Apps('/tmp')
+  with patch.object(app,'kubectl') as kube:
+   self.assertEqual(app.check_storage(dict(name='web'))['message'],'PVC не требуется.');kube.assert_not_called()

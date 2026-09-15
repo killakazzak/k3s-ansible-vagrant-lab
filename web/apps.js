@@ -51,7 +51,12 @@ function openTemplateEditor(template){
  const capture=()=>{if(!panel.childElementCount)return;const values={...items[active]};for(const input of panel.querySelectorAll('input,select'))values[input.name]=input.value;items[active]=values;};
  const valid=()=>[...panel.querySelectorAll('input,select')].every(input=>input.reportValidity());
  const drawList=()=>{side.replaceChildren();side.append(element('small','ПРИЛОЖЕНИЯ · '+items.length+'/10','template-editor-caption'));items.forEach((a,i)=>{const b=element('button',undefined,'template-editor-item'+(i===active?' active':''));b.type='button';b.setAttribute('aria-pressed',String(i===active));b.append(element('strong',a.name),element('small',a.type+' · '+a.namespace));b.onclick=()=>{if(!valid())return;capture();active=i;draw();};side.append(b)});
-  const add=element('button','＋ Добавить приложение','button secondary');add.type='button';add.disabled=items.length>=10;add.onclick=()=>{if(!valid())return;capture();let n=1;while(items.some(a=>a.name==='web-'+n))n++;items.push({type:'nginx',name:'web-'+n,namespace:'dev',image:catalogDefaults.nginx.image,port:80,replicas:1,cpu:100,memory:128,storage:2,storage_mode:'none',pvc:'',storage_secret:'',mount_path:'/data',host:'',shovel:false});active=items.length-1;draw()};side.append(add);
+  const add=element('button','＋ Добавить приложение','button secondary');add.type='button';add.disabled=items.length>=10;
+  add.onclick=()=>{if(!valid())return;capture();add.hidden=true;const picker=element('div',undefined,'template-app-picker');picker.append(element('strong','Выберите приложение'));
+   const labels={nginx:'Nginx',postgres:'PostgreSQL',redis:'Redis',kafka:'Apache Kafka',rabbitmq:'RabbitMQ',custom:'Свой образ'};
+   for(const [type,label] of Object.entries(labels)){const b=element('button',label,'button secondary');b.type='button';b.onclick=()=>{const d=catalogDefaults[type],base=type==='nginx'?'web':type==='custom'?'app':type;let name=base,n=1;while(items.some(a=>a.name===name))name=base+'-'+n++;items.push({type,name,namespace:items[active]?.namespace||'dev',image:d.image,port:d.port,replicas:1,cpu:100,memory:d.memory,storage:2,storage_mode:['postgres','redis','kafka','rabbitmq'].includes(type)?'new':'none',pvc:'',storage_secret:'',mount_path:'/data',host:'',shovel:false});active=items.length-1;draw()};picker.append(b)}
+   const cancel=element('button','Отмена','button secondary');cancel.type='button';cancel.onclick=()=>{picker.remove();add.hidden=false};picker.append(cancel);side.append(picker);
+  };side.append(add);
  };
  const draw=()=>{panel.replaceChildren();const a=items[active];const head=element('div',undefined,'template-editor-heading');head.append(element('strong',a.name));const remove=element('button','Удалить из шаблона','button secondary');remove.type='button';remove.disabled=items.length===1;remove.onclick=()=>{items.splice(active,1);active=Math.min(active,items.length-1);draw()};head.append(remove);panel.append(head);
   const fields=element('div',undefined,'template-editor-fields');panel.append(fields);
@@ -62,6 +67,12 @@ function openTemplateEditor(template){
   if(a.type==='rabbitmq')field('shovel','Shovel',String(a.shovel===true||a.shovel==='true'),'text',[{value:'false',label:'Выключен'},{value:'true',label:'Включён'}]);
   const storageState=()=>{const existing=mode.value==='existing',needsSecret=existing&&['postgres','rabbitmq'].includes(type.value);pvc.required=existing;pvc.parentElement.hidden=!existing;secret.required=needsSecret;secret.parentElement.hidden=!needsSecret;mount.required=mode.value!=='none';mount.parentElement.hidden=mode.value==='none';};mode.onchange=storageState;storageState();
   type.onchange=()=>{capture();const d=catalogDefaults[type.value],db=['postgres','redis','kafka','rabbitmq'].includes(type.value);Object.assign(items[active],{image:d.image,port:d.port,memory:d.memory,replicas:1,storage_mode:db?'new':'none',pvc:'',storage_secret:'',shovel:false});draw()};
+  const storageResult=element('div','Проверяем хранилище…','storage-validation');storageResult.setAttribute('role','status');panel.append(storageResult);
+  let storageTimer,storageRevision=0;
+  const checkStorage=()=>{clearTimeout(storageTimer);const revision=++storageRevision;storageResult.className='storage-validation';storageResult.textContent='Проверяем хранилище на выбранном кластере…';storageTimer=setTimeout(async()=>{if(!storageResult.isConnected||labCluster!==selectedCluster)return;const app={...items[active]};for(const input of fields.querySelectorAll('input,select'))app[input.name]=input.value;
+   try{const response=await api('templates',{operation:'check-storage',app});if(revision!==storageRevision||!storageResult.isConnected||labCluster!==selectedCluster)return;storageResult.textContent='✓ '+response.message;storageResult.className='storage-validation success'}catch(e){if(revision!==storageRevision||!storageResult.isConnected||labCluster!==selectedCluster)return;storageResult.textContent='⚠ '+e.message;storageResult.className='storage-validation failed'}
+  },650)};
+  fields.addEventListener('input',checkStorage);fields.addEventListener('change',checkStorage);checkStorage();
   panel.append(element('p','Лимиты CPU/RAM = 2 × запрос. PVC и Secret должны находиться в namespace приложения. Для баз доступна одна реплика.','lab-note'));drawList();
  };draw();
 }
@@ -69,7 +80,7 @@ function openTemplateEditor(template){
 function renderTemplateList(){const area=$('template-picker');area.replaceChildren();for(const t of savedTemplates){const b=element('button',undefined,'template-compact-item');b.type='button';b.append(element('span','▱','template-mini-icon'),element('strong',t.name),element('span',String(t.apps.length),'template-mini-count'),element('span','↗'));b.setAttribute('aria-label',templateCaption(t)+': показать карту');b.onclick=()=>openTemplateMap(t);area.append(b)}}
 async function loadTemplates(){try{const values=await api('templates');savedTemplates=values;$('template-picker').hidden=!savedTemplates.length;$('template-hint').textContent=savedTemplates.length?'Нажмите шаблон, чтобы посмотреть состав.':'Сохраните набор приложений в каталоге.';renderTemplateList()}catch(e){$('apps-message').textContent=e.message}}
 function runTemplate(t){
- let rows=[],checked='',generation=0,loaded=false;
+ let rows=[],checked='',generation=0,loaded=false,checkTimer,checkRevision=0;
  const payload=()=>({template:t.name,namespace:ns.value,storage:Object.fromEntries(rows.map(r=>[r.original,{name:r.name.value,storage_mode:r.mode.value,pvc:r.claim.value,storage_secret:r.secret.value,storage:r.size.value}]))});
  labOpen('Развернуть «'+t.name+'»','По умолчанию создаётся новый набор с новыми PVC и паролями. Существующие данные сохраняются. Для восстановления выберите свободный PVC и прежний Secret.',async()=>{
   if(!loaded||checked!==JSON.stringify(payload()))throw Error('Проверьте выбранные настройки перед развёртыванием.');
@@ -80,7 +91,7 @@ function runTemplate(t){
  const cards=element('div',undefined,'template-storage-cards'),result=element('div','Получаем свободные имена и PVC…','lab-note');
  const check=element('button','Проверить перед развёртыванием','button secondary');check.type='button';check.disabled=true;
  $('lab-extra').append(cards,check,result);
- const invalidate=()=>{checked='';result.textContent='Настройки изменены. Выполните проверку перед развёртыванием.';result.className='lab-note';};
+ const invalidate=()=>{checked='';checkRevision++;clearTimeout(checkTimer);result.textContent='Проверка настроек…';result.className='storage-validation';if(loaded)checkTimer=setTimeout(()=>{if(cards.isConnected&&labCluster===selectedCluster)check.onclick()},650);};
  const load=async()=>{
   const request=++generation;loaded=false;checked='';check.disabled=true;cards.replaceChildren();rows=[];result.className='lab-note';result.textContent='Проверяем свободные имена и хранилища…';
   try{sameCluster();const data=await api('templates',{operation:'storage-options',template:t.name,namespace:ns.value});
@@ -98,11 +109,11 @@ function runTemplate(t){
     card.append(element('p','Выбор PVC не проверяет формат данных или соответствие пароля базе. Используйте диск этого же приложения и совместимую версию.','lab-note'));
     rows.push({original:a.name,name,mode,size,claim,secret});
    }
-   loaded=true;check.disabled=false;result.textContent='Новый набор готов к проверке. Занятые и неготовые PVC исключены из выбора.';
+   loaded=true;check.disabled=false;invalidate();
   }catch(e){if(request===generation&&cards.isConnected){result.textContent=e.message;result.className='lab-note check-failed';}}
  };
  ns.addEventListener('input',()=>{generation++;loaded=false;check.disabled=true;invalidate()});ns.addEventListener('change',load);
- check.onclick=async()=>{try{sameCluster();if(!loaded||!$('lab-form').reportValidity())return;const data=payload(),signature=JSON.stringify(data);check.disabled=true;result.textContent='Проверяем PVC, Secrets, имена, URL и CPU/RAM…';const preview=await api('templates',{...data,operation:'check'});if(!cards.isConnected||signature!==JSON.stringify(payload())||labCluster!==selectedCluster)return;checked=signature;result.replaceChildren(element('strong','✓ Проверка пройдена'));for(const a of preview.apps)result.append(element('p',a.namespace+'/'+a.name+' · '+(a.mode==='new'?'новый PVC: '+a.pvc:a.mode==='existing'?'существующий PVC: '+a.pvc:'без PVC')+(a.secret?' · Secret: '+a.secret:'')));result.className='lab-note check-success';}catch(e){checked='';result.textContent='✕ '+e.message;result.className='lab-note check-failed';}finally{check.disabled=!loaded}};
+ check.onclick=async()=>{const revision=++checkRevision;clearTimeout(checkTimer);try{sameCluster();if(!loaded)return;const inputs=[...$('lab-form').querySelectorAll('input,select')];if(inputs.some(i=>!i.checkValidity())){checked='';result.textContent='Выберите PVC и Secret, если они требуются, и заполните обязательные поля.';result.className='storage-validation failed';return}const data=payload(),signature=JSON.stringify(data);check.disabled=true;result.textContent='Проверяем PVC, Secrets, имена, URL и CPU/RAM…';const preview=await api('templates',{...data,operation:'check'});if(revision!==checkRevision||!cards.isConnected||signature!==JSON.stringify(payload())||labCluster!==selectedCluster)return;checked=signature;result.replaceChildren(element('strong','✓ Проверка пройдена'));for(const a of preview.apps)result.append(element('p',a.namespace+'/'+a.name+' · '+(a.mode==='new'?'новый PVC: '+a.pvc:a.mode==='existing'?'существующий PVC: '+a.pvc:'без PVC')+(a.secret?' · Secret: '+a.secret:'')));result.className='storage-validation success';}catch(e){if(revision!==checkRevision||!cards.isConnected||labCluster!==selectedCluster)return;checked='';result.textContent='⚠ '+e.message;result.className='storage-validation failed';}finally{if(revision===checkRevision)check.disabled=!loaded}};
  load();
 }
 

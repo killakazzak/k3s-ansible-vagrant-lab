@@ -541,9 +541,10 @@ class Handler(BaseHTTPRequestHandler):
             if STOPPING:
                 return self.reply(409, {'error':'Веб-сервер завершает работу.'})
             if self.path == '/api/templates':
-                if data.get('operation') in ('storage-options','check'):
+                if data.get('operation') in ('storage-options','check','check-storage'):
                     import template_storage
                     root=active_root();apps=lab_apps.Apps(root,cluster_env(root))
+                    if data['operation']=='check-storage':return self.reply(200,apps.check_storage(data.get('app',{})))
                     method=template_storage.options if data['operation']=='storage-options' else template_storage.preview
                     return self.reply(200,method(apps,data))
                 with LOCK:

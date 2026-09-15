@@ -494,8 +494,8 @@ class Apps:
             panelhost=self.host(dict(c,host=c['name']+'-'+ns+'-ui'))
             objects.extend(app_panels.build(c,panelhost,MANAGER))
         return c,kind,objects,host
-    def preflight(self,config):
-        c,kind,objects,host=self.plan(config)
+    def check_storage(self,config):
+        c=validate(config)
         if c['storage_mode']=='existing':
             pvc=self.find('pvc',c['namespace'],c['pvc'])
             if not pvc or pvc.get('metadata',{}).get('deletionTimestamp') or pvc.get('status',{}).get('phase')!='Bound' or pvc.get('spec',{}).get('volumeMode','Filesystem')!='Filesystem':raise ValueError('Нужен готовый Filesystem PVC в выбранном namespace')
@@ -504,6 +504,15 @@ class Apps:
             if c['storage_secret']:
                 secret=self.find('secret',c['namespace'],c['storage_secret'])
                 if not secret or not secret.get('data',{}).get('password'):raise ValueError('Secret должен содержать ключ password с прежним паролем базы (пользователь app)')
+        if c['storage_mode']=='new':
+            name=('data-'+c['name']+'-0') if c['type'] in STATEFUL else c['name']+'-data'
+            if self.find('pvc',c['namespace'],name):raise ValueError('PVC '+c['namespace']+'/'+name+' уже существует. Выберите другое имя приложения или существующий PVC.')
+            if c['type'] in ('postgres','rabbitmq') and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Secret '+c['name']+'-auth уже существует. Для новой базы выберите другое имя приложения.')
+        return dict(ok=True,message='Хранилище проверено в namespace '+c['namespace']+'.' if c['storage_mode']!='none' else 'PVC не требуется.')
+
+    def preflight(self,config):
+        c,kind,objects,host=self.plan(config)
+        self.check_storage(c)
         for obj in objects:
             if obj['kind']=='Ingress':
                 panelhost=obj['spec']['rules'][0]['host']
