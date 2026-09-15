@@ -9,13 +9,26 @@ if [[ "${1:-}" == --help ]]; then
   exit 0
 fi
 [[ $# -eq 0 || ( $# -eq 1 && "$1" == --check ) ]] || { echo 'Unknown option; use --help.' >&2; exit 2; }
-[[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { echo 'Installer supports Apple Silicon Macs only.' >&2; exit 1; }
+source "$ROOT/scripts/host-platform.sh"
 if [[ "${1:-}" != --check ]] && command -v vagrant >/dev/null; then
   echo "Vagrant already installed: $(vagrant --version). Keeping it."
   exit 0
 fi
 setting() { ruby -ryaml -e 'puts YAML.load_file(ARGV[0]).fetch(ARGV[1])' "$ROOT/ansible/group_vars/all.yml" "$1"; }
 version="$(setting vagrant_version)"
+if [[ "$LAB_HOST_OS" == linux ]]; then
+  cache="${K3S_LAB_INSTALLER_CACHE:-$ROOT/.cache/installers}"
+  mkdir -p "$cache"
+  package="vagrant_${version}-1_amd64.deb"
+  base="https://releases.hashicorp.com/vagrant/$version"
+  "$ROOT/scripts/download.sh" "Vagrant $version Ubuntu amd64" "$base/$package" "$cache/$package"
+  "$ROOT/scripts/download.sh" 'Vagrant SHA256' "$base/vagrant_${version}_SHA256SUMS" "$cache/SHA256SUMS"
+  (cd "$cache"; grep " $package\$" SHA256SUMS | sha256sum -c -)
+  [[ "${1:-}" == --check ]] && exit 0
+  lab_sudo apt-get install -y "$cache/$package"
+  vagrant --version
+  exit 0
+fi
 expected="$(setting vagrant_installer_sha256)"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$expected" =~ ^[a-f0-9]{64}$ ]] || { echo 'Invalid installer version or SHA256 setting.' >&2; exit 1; }
 lab_base="$ROOT"

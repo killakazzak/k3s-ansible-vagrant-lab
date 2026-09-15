@@ -3,19 +3,21 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
-[[ "$(uname -s)/$(uname -m)" == Darwin/arm64 ]] || { echo 'Apple Silicon Mac required'; exit 1; }
+source "$ROOT/scripts/host-platform.sh"
+guest_arch=x86_64
+[[ "$LAB_HOST_ARCH" != arm64 ]] || guest_arch=aarch64
 command -v VBoxManage >/dev/null
 command -v vagrant >/dev/null
 BOX_NAME='k8s-lab/ubuntu-24.04-25gb'
-if vagrant box list | grep -F "$BOX_NAME (virtualbox, 0, (arm64))" >/dev/null; then exit 0; fi
+if vagrant box list | grep -F "$BOX_NAME (virtualbox, 0, ($LAB_HOST_ARCH))" >/dev/null; then exit 0; fi
 CACHE="$ROOT/.cache/box25"
 mkdir -p "$CACHE"
 PACKER="$CACHE/packer"
 if [[ ! -x "$PACKER" ]]; then
-  "$ROOT/scripts/download.sh" "Packer 1.14.2" https://releases.hashicorp.com/packer/1.14.2/packer_1.14.2_darwin_arm64.zip "$CACHE/packer_1.14.2_darwin_arm64.zip"
+  "$ROOT/scripts/download.sh" "Packer 1.14.2" https://releases.hashicorp.com/packer/1.14.2/packer_1.14.2_${LAB_HOST_OS}_${LAB_HOST_ARCH}.zip "$CACHE/packer_1.14.2_${LAB_HOST_OS}_${LAB_HOST_ARCH}.zip"
   "$ROOT/scripts/download.sh" "SHA256 для Packer" https://releases.hashicorp.com/packer/1.14.2/packer_1.14.2_SHA256SUMS "$CACHE/SHA256SUMS"
-  (cd "$CACHE"; grep ' packer_1.14.2_darwin_arm64.zip$' SHA256SUMS | shasum -a 256 -c -)
-  unzip -o "$CACHE/packer_1.14.2_darwin_arm64.zip" packer -d "$CACHE"
+  (cd "$CACHE"; grep " packer_1.14.2_${LAB_HOST_OS}_${LAB_HOST_ARCH}.zip\$" SHA256SUMS | shasum -a 256 -c -)
+  unzip -o "$CACHE/packer_1.14.2_${LAB_HOST_OS}_${LAB_HOST_ARCH}.zip" packer -d "$CACHE"
 fi
 BENTO="$CACHE/bento"
 if [[ ! -d "$BENTO/.git" ]]; then
@@ -25,5 +27,5 @@ fi
 /usr/bin/python3 "$ROOT/scripts/prepare-box-25.py" "$BENTO"
 cd "$BENTO"
 "$PACKER" init packer_templates
-"$PACKER" build -only=virtualbox-iso.vm -var-file=os_pkrvars/ubuntu/ubuntu-24.04-aarch64.pkrvars.hcl -var 'sources_enabled=["source.virtualbox-iso.vm"]' -var disk_size=25600 -var cpus=2 -var memory=4096 -var headless=true packer_templates
-vagrant box add --name "$BOX_NAME" --provider virtualbox --architecture arm64 builds/build_complete/ubuntu-24.04-aarch64.virtualbox.box
+"$PACKER" build -only=virtualbox-iso.vm -var-file=os_pkrvars/ubuntu/ubuntu-24.04-${guest_arch}.pkrvars.hcl -var 'sources_enabled=["source.virtualbox-iso.vm"]' -var disk_size=25600 -var cpus=2 -var memory=4096 -var headless=true packer_templates
+vagrant box add --name "$BOX_NAME" --provider virtualbox --architecture "$LAB_HOST_ARCH" builds/build_complete/ubuntu-24.04-${guest_arch}.virtualbox.box

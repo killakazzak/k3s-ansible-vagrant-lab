@@ -289,7 +289,7 @@ class ClusterMenu
     end
     return puts('Эта версия уже указана в настройках.') if value == settings['k3s_version']
     # Validate the release before touching VMs or configuration.
-    run('curl', '--fail', '--silent', '--show-error', '--location', '--head', '--connect-timeout', '10', '--max-time', '30', '--output', '/dev/null', "https://github.com/k3s-io/k3s/releases/download/#{value}/sha256sum-arm64.txt")
+    run('curl', '--fail', '--silent', '--show-error', '--location', '--head', '--connect-timeout', '10', '--max-time', '30', '--output', '/dev/null', "https://github.com/k3s-io/k3s/releases/download/#{value}/sha256sum-#{settings['vm_architecture'] == 'arm64' ? 'arm64' : 'amd64'}.txt")
     saved_inventory = inventory
     existing = !Dir.glob(File.join(@root, '.vagrant/machines/*/*/id')).empty?
     if existing

@@ -106,7 +106,7 @@
       ansible.builtin.import_tasks: image-cache.yml
     - name: Distribute cached binary
       ansible.builtin.copy:
-        src: "{{ hostvars['localhost'].asset_cache }}/k3s-arm64"
+        src: "{{ hostvars['localhost'].asset_cache }}/{{ 'k3s-arm64' if vm_architecture == 'arm64' else 'k3s' }}"
         dest: /usr/local/bin/k3s
         mode: '0755'
       register: k3s_binary

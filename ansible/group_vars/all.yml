@@ -86,3 +86,7 @@ bootstrap_rollout_timeout: 1200
 
 # Fresh Ubuntu base image with a 25 GiB boot disk; built locally on first deploy.
 vm_disk_gb: {server: 25, workers: 25}
+
+# Assets follow guest architecture; the launcher detects it on a fresh host.
+k3s_binary: "{{ 'k3s-arm64' if vm_architecture == 'arm64' else 'k3s' }}"
+k3s_asset_arch: "{{ 'arm64' if vm_architecture == 'arm64' else 'amd64' }}"

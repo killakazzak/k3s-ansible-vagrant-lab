@@ -3,6 +3,18 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/host-platform.sh"
+case "${1:-menu}" in --help|-h) ;; *) lab_host_prepare ;; esac
+if [[ "$LAB_HOST_OS" == linux ]]; then
+  case "${1:-menu}" in
+    menu|web|web-start)
+      "$ROOT/scripts/install-vagrant.sh"
+      "$ROOT/scripts/install-ansible.sh"
+      "$ROOT/scripts/install-virtualbox.sh"
+      hash -r
+      ;;
+  esac
+fi
 export PATH="$ROOT/.offline-venv/bin:$PATH"
 if [[ "${1:-}" == "--cluster" ]]; then
   name="${2:-}"

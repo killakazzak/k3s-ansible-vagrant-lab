@@ -1,10 +1,12 @@
 ---
-- name: Cache verified k3s release once on the Mac
+- name: Cache verified k3s release once on the host
   hosts: localhost
   connection: local
   gather_facts: false
   vars_files: [group_vars/all.yml]
   vars:
+    k3s_binary: "{{ 'k3s-arm64' if vm_architecture == 'arm64' else 'k3s' }}"
+    k3s_asset_arch: "{{ 'arm64' if vm_architecture == 'arm64' else 'amd64' }}"
     asset_socket_timeout: "{{ lookup('env', 'K3S_DOWNLOAD_CONNECT_TIMEOUT') | default('10', true) | int }}"
     ansible_become: false
     ansible_ssh_private_key_file: ""
@@ -25,6 +27,7 @@
     - name: Validate offline versions
       ansible.builtin.assert:
         that:
+          - vm_architecture == 'arm64'
           - (lookup('file', offline_bundle + '/manifest.json') | from_json).k3s_version == k3s_version
           - not rancher_enabled | bool or (lookup('file', offline_bundle + '/manifest.json') | from_json).rancher_version == rancher_version
           - not rancher_enabled | bool or (lookup('file', offline_bundle + '/manifest.json') | from_json).cert_manager_version == cert_manager_version
@@ -35,18 +38,18 @@
         src: "{{ offline_bundle }}/k3s/{{ item }}"
         dest: "{{ asset_cache }}/{{ item }}"
         mode: '0755'
-      loop: [k3s-arm64, install.sh]
+      loop: ["{{ k3s_binary }}", install.sh]
       when: use_offline_bundle | bool
-    - name: "Загрузка k3s-arm64 и SHA256 — {{ k3s_release_url }}"
+    - name: "Загрузка {{ k3s_binary }} и SHA256 — {{ k3s_release_url }}"
       when: not use_offline_bundle | bool
       register: asset_download_result
       retries: 3
       delay: 2
       until: asset_download_result is succeeded
       ansible.builtin.get_url:
-        url: "{{ k3s_release_url }}/k3s-arm64"
-        checksum: "sha256:{{ k3s_release_url }}/sha256sum-arm64.txt"
-        dest: "{{ asset_cache }}/k3s-arm64"
+        url: "{{ k3s_release_url }}/{{ k3s_binary }}"
+        checksum: "sha256:{{ k3s_release_url }}/sha256sum-{{ k3s_asset_arch }}.txt"
+        dest: "{{ asset_cache }}/{{ k3s_binary }}"
         mode: '0755'
         timeout: "{{ asset_socket_timeout }}"
     - name: "Загрузка install.sh — {{ k3s_installer_url }}"
@@ -60,21 +63,21 @@
         dest: "{{ asset_cache }}/install.sh"
         mode: '0644'
         timeout: "{{ asset_socket_timeout }}"
-    - name: "Загрузка k3s-airgap-images-arm64.tar.zst — {{ k3s_release_url }}"
+    - name: "Загрузка k3s-airgap-images-{{ k3s_asset_arch }}.tar.zst — {{ k3s_release_url }}"
       register: asset_download_result
       retries: 3
       delay: 2
       until: asset_download_result is succeeded
       ansible.builtin.get_url:
-        url: "{{ k3s_release_url }}/k3s-airgap-images-arm64.tar.zst"
-        checksum: "sha256:{{ k3s_release_url }}/sha256sum-arm64.txt"
-        dest: "{{ asset_cache }}/k3s-airgap-images-arm64.tar.zst"
+        url: "{{ k3s_release_url }}/k3s-airgap-images-{{ k3s_asset_arch }}.tar.zst"
+        checksum: "sha256:{{ k3s_release_url }}/sha256sum-{{ k3s_asset_arch }}.txt"
+        dest: "{{ asset_cache }}/k3s-airgap-images-{{ k3s_asset_arch }}.tar.zst"
         timeout: "{{ asset_socket_timeout }}"
         mode: '0644'
       when: not use_offline_bundle | bool
     - name: Select container archives for chosen components
       ansible.builtin.set_fact:
-        cached_image_archives: "{{ ([offline_bundle + '/images/k3s-airgap-images-arm64.tar.zst'] + (lookup('fileglob', offline_bundle + '/images/*.tar', wantlist=True) if rancher_enabled | bool else [])) if use_offline_bundle | bool else [asset_cache + '/k3s-airgap-images-arm64.tar.zst'] }}"
+        cached_image_archives: "{{ ([offline_bundle + '/images/k3s-airgap-images-' + k3s_asset_arch + '.tar.zst'] + (lookup('fileglob', offline_bundle + '/images/*.tar', wantlist=True) if rancher_enabled | bool else [])) if use_offline_bundle | bool else [asset_cache + '/k3s-airgap-images-' + k3s_asset_arch + '.tar.zst'] }}"
     - name: "Загрузка Helm charts Rancher {{ rancher_version }} и cert-manager {{ cert_manager_version }}"
       when: rancher_enabled | bool and not use_offline_bundle | bool
       register: asset_download_result

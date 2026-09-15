@@ -7,6 +7,14 @@ if command -v ansible-playbook >/dev/null && command -v ansible >/dev/null; then
   echo "Ansible уже установлен: $(ansible-playbook --version | sed -n '1p')"
   exit 0
 fi
+source "$ROOT/scripts/host-platform.sh"
+if [[ "$LAB_HOST_OS" == linux ]]; then
+  lab_host_prepare
+  python3 -m venv "$ROOT/.offline-venv"
+  "$ROOT/.offline-venv/bin/python" -m pip install 'ansible-core==2.17.14' PyYAML
+  "$ROOT/.offline-venv/bin/ansible-playbook" --version
+  exit 0
+fi
 if [[ -d "$ROOT/vendor/offline" ]]; then
   exec "$ROOT/scripts/offline-bootstrap.sh"
 fi
