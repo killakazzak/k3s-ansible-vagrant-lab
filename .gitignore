@@ -39,3 +39,6 @@ vendor/offline/
 
 # Installers live in Releases and the local cache
 vendor/vagrant/*.dmg
+
+# Installers live in release assets, not Git history.
+vendor/vagrant/*.deb

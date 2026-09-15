@@ -17,13 +17,25 @@ fi
 setting() { ruby -ryaml -e 'puts YAML.load_file(ARGV[0]).fetch(ARGV[1])' "$ROOT/ansible/group_vars/all.yml" "$1"; }
 version="$(setting vagrant_version)"
 if [[ "$LAB_HOST_OS" == linux ]]; then
-  cache="${K3S_LAB_INSTALLER_CACHE:-$ROOT/.cache/installers}"
+  lab_base="$ROOT"
+  if [[ "$(basename "$(dirname "$ROOT")")" == .clusters ]]; then lab_base="$(dirname "$(dirname "$ROOT")")"; fi
+  cache="${K3S_LAB_INSTALLER_CACHE:-$lab_base/.cache/installers}"
   mkdir -p "$cache"
   package="vagrant_${version}-1_amd64.deb"
-  base="https://releases.hashicorp.com/vagrant/$version"
-  "$ROOT/scripts/download.sh" "Vagrant $version Ubuntu amd64" "$base/$package" "$cache/$package"
-  "$ROOT/scripts/download.sh" 'Vagrant SHA256' "$base/vagrant_${version}_SHA256SUMS" "$cache/SHA256SUMS"
-  (cd "$cache"; grep " $package\$" SHA256SUMS | sha256sum -c -)
+  sums="$lab_base/vendor/vagrant/vagrant_${version}_SHA256SUMS"
+  expected=$(awk -v name="$package" '$2 == name {print $1}' "$sums")
+  [[ "$expected" =~ ^[a-f0-9]{64}$ ]] || { echo 'Нет закреплённой SHA256 для Vagrant Ubuntu.' >&2; exit 1; }
+  if [[ ! -f "$cache/$package" ]]; then
+    if [[ -f "$lab_base/vendor/vagrant/$package" ]]; then
+      cp "$lab_base/vendor/vagrant/$package" "$cache/$package"
+    else
+      url="https://github.com/killakazzak/k3s-ansible-vagrant-lab/releases/download/vagrant-${version}/$package"
+      "$ROOT/scripts/download.sh" "Vagrant $version Ubuntu amd64" "$url" "$cache/$package"
+    fi
+  fi
+  actual=$(shasum -a 256 "$cache/$package" | awk '{print $1}')
+  [[ "$actual" == "$expected" ]] || { echo 'Vagrant Ubuntu: SHA256 не совпадает; установка запрещена.' >&2; exit 1; }
+  echo "Vagrant $version Ubuntu amd64: SHA256 проверена."
   [[ "${1:-}" == --check ]] && exit 0
   lab_sudo apt-get install -y "$cache/$package"
   vagrant --version
