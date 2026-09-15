@@ -15,7 +15,8 @@ const PodFilters = (() => {
  const statuses=p=>[...new Set([status(p),p.phase||'Unknown',...(p.statuses||[]).map(c=>c.state?.waiting?.reason).filter(Boolean)])];
  const node=p=>p.node||'Не назначен';
  function apply(pods,filter){
-  const items=pods.filter(p=>(!filter.podStatus||statuses(p).includes(filter.podStatus))&&(!filter.podContainer||containers(p).includes(filter.podContainer))&&(!filter.podNode||node(p)===filter.podNode));
+  const nameQuery=(filter.podName||'').trim().toLowerCase();
+  const items=pods.filter(p=>String(p.name||'').toLowerCase().includes(nameQuery)&&(!filter.podStatus||statuses(p).includes(filter.podStatus))&&(!filter.podContainer||containers(p).includes(filter.podContainer))&&(!filter.podNode||node(p)===filter.podNode));
   const value=p=>filter.podSort==='status'?status(p):filter.podSort==='container'?containers(p).join(', '):filter.podSort==='node'?node(p):p.name;
   const direction=filter.podDirection==='desc'?-1:1;
   return items.sort((a,b)=>direction*(compare(value(a),value(b))||compare(a.namespace+'/'+a.name,b.namespace+'/'+b.name)));

@@ -147,7 +147,7 @@ for(const [type,label] of resourceTypes){if($('resource-tab-'+type))continue;con
 const resourceFilters=new Map();
 function resourceItems(){const more={};for(const [key,label] of resourceTypes){if(['pods','pvcs','secrets'].includes(key))continue;const kinds={deployments:'Deployment',statefulsets:'StatefulSet',daemonsets:'DaemonSet',jobs:'Job',cronjobs:'CronJob',services:'Service',ingresses:'Ingress',configmaps:'ConfigMap'};more[key]=extraCluster===selectedCluster?extraResources.filter(r=>r.kind===kinds[key]):[]}return {...more,pods:graphCluster===selectedCluster?(graphData?.pods||[]):[],pvcs:pvcData,secrets:secretData};}
 function resourceKey(p){return p.namespace+'/'+p.name;}
-function resourceFilter(){if(!resourceFilters.has(selectedCluster))resourceFilters.set(selectedCluster,{namespace:'',search:'',podStatus:'',podContainer:'',podNode:'',podSort:'name',podDirection:'asc'});return resourceFilters.get(selectedCluster);}
+function resourceFilter(){if(!resourceFilters.has(selectedCluster))resourceFilters.set(selectedCluster,{namespace:'',search:'',podName:'',podStatus:'',podContainer:'',podNode:'',podSort:'name',podDirection:'asc'});return resourceFilters.get(selectedCluster);}
 function resourceButton(label,fn,cls='button secondary'){const b=element('button',label,cls);b.type='button';b.onclick=fn;return b;}
 function showResource(type,item){resourceSelected={type,key:resourceKey(item),cluster:selectedCluster};renderResourceDetail(item);renderResources(true);}
 function renderResourceDetail(item){
@@ -176,6 +176,10 @@ function podTableHead(pods,filter){
    const button=resourceButton('',()=>{filter.podDirection=active&&filter.podDirection!=='desc'?'desc':'asc';filter.podSort=sortKey;renderResources(true)},'column-sort');
    button.append(element('span',label),element('span',active?(filter.podDirection==='desc'?'↓':'↑'):'↕','column-sort-arrow'));button.title='Сортировать: '+label;th.append(button);
   }else th.append(element('span',label,'column-heading'));
+  if(sortKey==='name'){
+   const input=document.createElement('input');input.type='text';input.id='column-podName';input.className='column-filter'+(filter.podName?' active':'');input.placeholder='Найти по имени…';input.setAttribute('aria-label','Фильтр по имени Pod');input.autocomplete='off';input.value=filter.podName||'';
+   input.oninput=()=>{filter.podName=input.value;renderResources(true)};th.append(input);
+  }
   if(filterKey){
    const select=document.createElement('select');select.id='column-'+filterKey;select.className='column-filter'+(filter[filterKey]?' active':'');select.setAttribute('aria-label','Фильтр: '+label);
    for(const value of ['',...new Set([...values,...(filter[filterKey]?[filter[filterKey]]:[])].sort(PodFilters.compare))]){const option=element('option',value||'Все');option.value=value;select.append(option)}
@@ -185,15 +189,17 @@ function podTableHead(pods,filter){
  }
  head.append(row);return head;
 }
-const podReset=resourceButton('Сбросить фильтры',()=>{Object.assign(resourceFilter(),{podStatus:'',podContainer:'',podNode:'',podSort:'name',podDirection:'asc'});renderResources(true)},'column-reset');
+const podReset=resourceButton('Сбросить фильтры',()=>{Object.assign(resourceFilter(),{podName:'',podStatus:'',podContainer:'',podNode:'',podSort:'name',podDirection:'asc'});renderResources(true)},'column-reset');
 $('resource-summary').after(podReset);
 function renderResources(force=false){
+ const nameInput=document.activeElement?.id==='column-podName'?document.activeElement:null;
+ const nameCursor=nameInput?[nameInput.selectionStart,nameInput.selectionEnd]:null;
  if(!force&&document.activeElement?.classList.contains('column-filter'))return;
  const sets=resourceItems(),filter=resourceFilter();const signature=JSON.stringify([selectedCluster,resourceTab,resourceView,filter,sets]);if(!force&&signature===resourceSignature)return;resourceSignature=signature;
  const namespaces=[...new Set(Object.values(sets).flat().map(p=>p.namespace))].sort();const select=$('resource-namespace');select.replaceChildren();for(const ns of ['',...new Set([...namespaces,...(filter.namespace?[filter.namespace]:[])])]){const o=element('option',ns||'Все пространства');o.value=ns;select.append(o)}select.value=filter.namespace;if($('resource-search').value!==filter.search)$('resource-search').value=filter.search;
  for(const [type,label] of resourceTypes){const tab=$('resource-tab-'+type);tab.replaceChildren(element('span',label),element('span',String(sets[type].filter(p=>!filter.namespace||p.namespace===filter.namespace).length),'resource-tab-count'));tab.setAttribute('aria-selected',String(type===resourceTab));tab.tabIndex=type===resourceTab?0:-1;}
  $('resource-view-controls').hidden=resourceTab!=='pods';$('resource-table-view').setAttribute('aria-pressed',String(resourceView==='table'));$('resource-map-view').setAttribute('aria-pressed',String(resourceView==='map'));
- podReset.hidden=resourceTab!=='pods'||(!filter.podStatus&&!filter.podContainer&&!filter.podNode&&(filter.podSort||'name')==='name'&&(filter.podDirection||'asc')==='asc');
+ podReset.hidden=resourceTab!=='pods'||(!filter.podName&&!filter.podStatus&&!filter.podContainer&&!filter.podNode&&(filter.podSort||'name')==='name'&&(filter.podDirection||'asc')==='asc');
  const query=filter.search.toLowerCase();let items=sets[resourceTab].filter(p=>(!filter.namespace||p.namespace===filter.namespace)&&JSON.stringify(p).toLowerCase().includes(query));if(resourceTab==='pods')items=PodFilters.apply(items,filter);const content=$('resource-content');content.replaceChildren();
  $('resource-summary').textContent=`${items.length} из ${sets[resourceTab].length} · автообновление 15 с`;
  const errorText=!['pods','pvcs','secrets'].includes(resourceTab)?extraError:resourceTab==='pods'?(!graphData?$('graph-status').textContent:''):resourceTab==='pvcs'?$('pvc-list').textContent:$('secret-list').textContent;
@@ -207,6 +213,7 @@ function renderResources(force=false){
   if(!items.length){const empty=document.createElement('tr'),cell=element('td','Ресурсов по выбранным фильтрам нет.','resource-empty');cell.colSpan=headers.length;empty.append(cell);tbody.append(empty);}
   for(const p of items){const row=document.createElement('tr');if(resourceSelected?.cluster===selectedCluster&&resourceSelected.type===resourceTab&&resourceSelected.key===resourceKey(p))row.className='selected';const name=document.createElement('td');const nameButton=resourceButton('',()=>showResource(resourceTab,p),'resource-name');const icon=element('span',{pods:'◇',pvcs:'▤',secrets:'⌘'}[resourceTab]||'▱','resource-type-icon');icon.setAttribute('aria-hidden','true');nameButton.append(icon,element('span',p.name));name.append(nameButton);row.append(name);const values=resourceTab==='pods'?[p.namespace,PodFilters.status(p),PodFilters.containers(p).join(', ')||'—',p.node||'Не назначен',String((p.statuses||[]).reduce((a,c)=>a+c.restarts,0))]:resourceTab==='pvcs'?[p.namespace,p.capacity,p.phase,p.location?.server||(p.location?.nodes||[]).map(n=>n.name).join(', ')||'—']:resourceTab==='secrets'?[p.namespace,p.type,p.keys.join(', ')]:[p.namespace,p.state,p.summary];for(const [index,value] of values.entries()){const td=element('td');const isStatus=(resourceTab==='pods'&&index===1)||(resourceTab==='pvcs'&&index===2);if(index===0)td.append(element('span',value,'resource-ns-chip'));else if(isStatus){const tone=['Ready','Bound','Succeeded'].includes(value)?'good':['Pending','Running'].includes(value)?'warn':'bad';td.append(element('span',value,'resource-status-chip '+tone))}else td.append(element('span',value));row.append(td)}row.onclick=e=>{if(!e.target.closest('button'))showResource(resourceTab,p)};tbody.append(row)}table.append(tbody);content.append(table);
  }
+ if(nameCursor&&$('column-podName')){$('column-podName').focus({preventScroll:true});$('column-podName').setSelectionRange(...nameCursor);}
  if(resourceSelected){const selected=resourceSelected.cluster===selectedCluster&&sets[resourceSelected.type].find(p=>resourceKey(p)===resourceSelected.key);if(!selected){resourceSelected=null;$('resource-detail').hidden=true}else renderResourceDetail(selected);}
 }
 for(const [type] of resourceTypes)$('resource-tab-'+type).onclick=()=>{resourceTab=type;resourceSelected=null;$('resource-detail').hidden=true;renderResources(true)};

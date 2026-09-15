@@ -97,3 +97,5 @@
 #resources .resource-viewbar{justify-content:flex-start}
 #resources #resource-view-controls{margin-left:auto}
 #resources .pod-map-filters{border-bottom:1px solid #e1e9e3}
+
+#resources input.column-filter{box-sizing:border-box;min-width:150px;padding-right:7px;text-transform:none;letter-spacing:normal}#resources input.column-filter::placeholder{color:#99a69e;font-weight:400}

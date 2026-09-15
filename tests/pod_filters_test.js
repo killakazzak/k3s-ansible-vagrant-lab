@@ -18,3 +18,9 @@ assert.deepEqual(names(pods),['web-10','web-2','db']);
 assert.deepEqual(p.apply(pods,{podContainer:'missing'}),[]);
 assert.equal(p.status({phase:'Failed',statuses:[{state:{terminated:{exitCode:137,reason:'OOMKilled'}}}]}),'OOMKilled');
 console.log('Pod filters: combined filters, container membership, status reasons, sort directions and input immutability passed');
+
+assert.deepEqual(names(p.apply(pods,{podName:' WEB- '})),['web-2','web-10']);
+assert.deepEqual(names(p.apply(pods,{podName:'-2',podNode:'worker1'})),['web-2']);
+assert.deepEqual(names(p.apply(pods,{podName:'postgres'})),[]);
+assert.equal(p.apply(pods,{podName:''}).length,3);
+console.log('Pod name filtering: partial, case-insensitive, combined and cleared passed');
