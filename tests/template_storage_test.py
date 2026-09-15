@@ -55,3 +55,11 @@ class TemplateStorageTests(unittest.TestCase):
   app=lab.Apps('/tmp')
   with patch.object(app,'kubectl') as kube:
    self.assertEqual(app.check_storage(dict(name='web'))['message'],'PVC не требуется.');kube.assert_not_called()
+
+ def test_free_name_skips_apps_pvc_and_secret(self):
+  self.assertEqual(storage.free_name('postgres',{'postgres-1','data-postgres-2-0','postgres-3-auth'}),'postgres-4')
+  self.assertEqual(storage.free_name('redis',set()),'redis-1')
+ def test_suggestion_respects_namespace_and_draft(self):
+  app=Mock();app.get.return_value={'items':[{'metadata':{'name':'data-postgres-1-0'}}]}
+  self.assertEqual(storage.suggest_name(app,dict(base='postgres',namespace='dev',reserved=['postgres-2']))['name'],'postgres-3')
+  self.assertEqual(app.get.call_args.args[1],'dev');app.apply.assert_not_called()

@@ -64,3 +64,21 @@ def prepare(apps,data):
 def preview(apps,data):
     plans=prepare(apps,data)
     return dict(ok=True,apps=[dict(name=c['name'],namespace=c['namespace'],mode=c['storage_mode'],pvc=c['pvc'] or ('data-'+c['name']+'-0' if kind=='StatefulSet' else c['name']+'-data') if c['storage_mode']!='none' else '',secret=c['storage_secret'] or (c['name']+'-auth' if c['type'] in ('postgres','rabbitmq') else '')) for c,kind,objects,host in plans])
+
+
+def suggest_name(apps,data):
+    ns=namespace(data.get('namespace'),True)
+    base=dns(data.get('base'),'основа имени')
+    reserved=data.get('reserved',[])
+    if not isinstance(reserved,list) or len(reserved)>100:raise ValueError('Некорректный список имён')
+    names={dns(value) for value in reserved}
+    names.update(o['metadata']['name'] for o in apps.get('deployments,statefulsets,daemonsets,services,ingresses,configmaps,secrets,pvc',ns)['items'])
+    return dict(name=free_name(base,names))
+
+
+def free_name(base,names):
+    base=base[:45].rstrip('-')
+    for index in range(1,10001):
+        candidate=base+'-'+str(index)
+        if not any(n==candidate or n.startswith(candidate+'-') or n.startswith('data-'+candidate+'-') for n in names):return candidate
+    raise ValueError('Не удалось подобрать имя. Измените основу имени.')
