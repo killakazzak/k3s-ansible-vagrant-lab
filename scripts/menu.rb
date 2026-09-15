@@ -409,7 +409,10 @@ class ClusterMenu
       ['Возобновить VM стенда', '17'],
       ['Ссылки на Rancher и Traefik', '11'],
       ['Установить Rancher', '18'],
-      ['Остановить веб-сервер', '15']]]
+      ['Остановить веб-сервер', '15']]],
+    ['ОКРУЖЕНИЕ ПЛАТФОРМЫ', [
+      ['Проверить окружение', 'doctor'],
+      ['Установить недостающие компоненты', 'setup']]]
   ].freeze
 
   def menu_action(number)
@@ -465,6 +468,8 @@ class ClusterMenu
         when '16' then run('./cluster.sh', 'stand-stop') if confirm('Штатно выключить VM этого стенда? Диски и данные сохранятся.')
         when '17' then run('./cluster.sh', 'stand-start')
         when '18' then run('./cluster.sh', 'rancher-install')
+        when 'doctor' then system('ruby', File.join(cluster_profiles.first.last, 'scripts/environment.rb'))
+        when 'setup' then run('bash', File.join(cluster_profiles.first.last, 'scripts/environment-setup.sh'))
         when '0' then break
         else puts 'Выбери номер из меню.'
         end

@@ -4,10 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 source "$ROOT/scripts/host-platform.sh"
-case "${1:-menu}" in --help|-h) ;; *) lab_host_prepare ;; esac
+case "${1:-menu}" in --help|-h|doctor|setup) ;; *) lab_host_prepare ;; esac
 if [[ "$LAB_HOST_OS" == linux ]]; then
   case "${1:-menu}" in
-    menu|web|web-start)
+    web|web-start)
       "$ROOT/scripts/install-vagrant.sh"
       "$ROOT/scripts/install-ansible.sh"
       hash -r
@@ -15,7 +15,8 @@ if [[ "$LAB_HOST_OS" == linux ]]; then
   esac
 fi
 case "${1:-menu}" in
-  menu|web|web-start) "$ROOT/scripts/install-virtualbox.sh" ;;
+  menu) "$ROOT/scripts/install-virtualbox.sh" || echo "VirtualBox не готов. Установка доступна в меню окружения." ;;
+  web|web-start) "$ROOT/scripts/install-virtualbox.sh" ;;
 esac
 export PATH="$ROOT/.offline-venv/bin:$PATH"
 if [[ "${1:-}" == "--cluster" ]]; then
@@ -35,6 +36,8 @@ export VAGRANT_CWD="$ROOT"
 export VAGRANT_DOTFILE_PATH="$ROOT/.vagrant"
 usage() {
   echo 'Usage: ./cluster.sh {menu|web [--port PORT]|web-start|web-stop|web-status|stand-stop|stand-start|up [--verify]|destroy|status|verify}'
+  echo 'doctor   Check environment without installing anything.'
+  echo 'setup    Install missing dependencies; VirtualBox asks for confirmation.'
   echo 'up       Create/start the cluster and apply Ansible.'
   echo 'destroy  Delete the VMs of this project and their data without a prompt.'
   echo '         Removes local kubeconfig after successful deletion; preserves download caches.'
@@ -44,10 +47,12 @@ usage() {
 command_name="${1:-menu}"
 [[ $# -eq 0 ]] || shift
 case "$command_name" in
+  doctor) exec ruby "$ROOT/scripts/environment.rb" ;;
+  setup) exec bash "$ROOT/scripts/environment-setup.sh" ;;
   menu)
     [[ $# -eq 0 ]] || { usage >&2; exit 2; }
-    "$ROOT/scripts/install-vagrant.sh"
-    "$ROOT/scripts/install-ansible.sh"
+    "$ROOT/scripts/install-vagrant.sh" || echo "Vagrant: требуется установка через меню окружения."
+    "$ROOT/scripts/install-ansible.sh" || echo "Ansible: требуется установка через меню окружения."
     if python3 "$ROOT/scripts/web-service.py" start; then
       export K3S_LAB_WEB_LINK_SHOWN=1
     else

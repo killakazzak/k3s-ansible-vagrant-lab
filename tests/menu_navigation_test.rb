@@ -24,3 +24,7 @@ ensure
   $stdin, $stdout = input, output
 end
 puts 'First menu action opens the console without creating a cluster; exit works.'
+
+menu=MenuNavigationTest.new
+raise 'Doctor mapping' unless menu.menu_action('19')=='doctor'
+raise 'Setup mapping' unless menu.menu_action('20')=='setup'
