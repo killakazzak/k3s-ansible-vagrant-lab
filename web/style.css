@@ -99,3 +99,29 @@
 #resources .pod-map-filters{border-bottom:1px solid #e1e9e3}
 
 #resources input.column-filter{box-sizing:border-box;min-width:150px;padding-right:7px;text-transform:none;letter-spacing:normal}#resources input.column-filter::placeholder{color:#99a69e;font-weight:400}
+
+#lab-dialog.debug-dialog{width:min(1080px,94vw);height:82vh;max-width:98vw;max-height:96vh;min-width:min(540px,94vw);min-height:420px;resize:both;overflow:auto;padding:24px;box-sizing:border-box;border-radius:18px}
+#lab-dialog.debug-dialog.debug-expanded{width:98vw!important;height:96vh!important;resize:none}
+.debug-dialog #lab-form{display:flex;flex-direction:column;height:100%;min-height:0}
+.debug-dialog .modalhead{display:flex;align-items:center;gap:12px;margin:0;flex-shrink:0}
+.debug-dialog #lab-title{font-size:21px;margin:0;flex:1}
+.debug-dialog .modalhead .close{position:static;flex-shrink:0}
+.debug-dialog .debug-expand{font-size:11px;padding:7px 10px;white-space:nowrap}
+.debug-dialog #lab-description{font-family:ui-monospace,monospace;font-size:12px;margin:8px 0 18px;color:#71877b;overflow-wrap:anywhere;flex-shrink:0}
+.debug-dialog #lab-fields{display:flex;gap:12px;flex-shrink:0}.debug-dialog #lab-fields>div{flex:1;min-width:0}.debug-dialog #lab-fields>div[hidden]{display:none}
+.debug-dialog #lab-fields label{font-size:11px;margin-bottom:5px}.debug-dialog #lab-fields select{height:36px;padding:6px 12px;font-size:12px;border-radius:8px;margin-bottom:10px}
+.debug-dialog #lab-extra{display:flex;flex-direction:column;flex:1;min-height:150px;gap:10px}
+.debug-dialog .debug-connect-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.debug-dialog #lab-extra .button{margin:0;padding:7px 12px;font-size:11px;border-radius:8px}
+.debug-dialog .debug-status{font-size:11px;color:#537968;margin:0 0 0 auto}
+.debug-dialog .debug-log-toolbar{display:flex;align-items:center;gap:10px;background:#f3f7f4;padding:9px;border:1px solid #e1eae4;border-radius:10px}
+.debug-dialog .debug-log-toolbar[hidden]{display:none}
+.debug-dialog .debug-log-toolbar input[type=search]{flex:1;min-width:120px;margin:0;height:32px;font-size:12px;padding:6px 9px;border-radius:7px}
+.debug-dialog .debug-log-count{font-size:10px;color:#7d8e83;white-space:nowrap}
+.debug-dialog .debug-follow{display:flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap;margin:0}.debug-dialog .debug-follow input{width:auto;margin:0}
+.debug-dialog .pod-debug-terminal{flex:1;min-height:100px;height:auto!important;padding:10px;background:#142e31;border-radius:11px;overflow:hidden}
+.debug-dialog .pod-debug-terminal.logs-mode{padding:0}
+.debug-dialog .debug-log-output{height:100%;box-sizing:border-box;overflow:auto;margin:0;padding:16px;color:#d6e8df;background:#142e31;font:12px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;border:0;border-radius:0;max-height:none}
+.debug-dialog .debug-hint{font-size:10px;color:#8b9b91;margin:0}
+.debug-dialog .modalfooter{padding-top:12px;margin-top:0;flex-shrink:0}.debug-dialog .modalfooter .button{padding:7px 14px;font-size:12px}
+@media(max-width:650px){#lab-dialog.debug-dialog{padding:14px}.debug-dialog .debug-log-toolbar{flex-wrap:wrap}.debug-dialog .debug-log-toolbar input[type=search]{flex-basis:100%}.debug-dialog .debug-status{margin-left:0}}
