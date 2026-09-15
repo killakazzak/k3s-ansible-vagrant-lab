@@ -1,0 +1,18 @@
+---
+- name: Verify Metrics Server
+  hosts: "{{ groups['server'][0] }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for container metrics API
+      ansible.builtin.command: k3s kubectl get --raw=/apis/metrics.k8s.io/v1beta1/pods --request-timeout=5s
+      register: metrics_api
+      until: metrics_api.rc == 0 and (metrics_api.stdout | from_json).get('items', []) | length > 0
+      retries: 40
+      delay: 5
+      changed_when: false
+      when: "'metrics-server' not in disabled_components"
+    - name: Show node resource consumption
+      ansible.builtin.command: k3s kubectl top nodes --request-timeout=5s
+      changed_when: false
+      when: "'metrics-server' not in disabled_components"

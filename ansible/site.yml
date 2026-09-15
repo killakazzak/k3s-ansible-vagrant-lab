@@ -378,3 +378,5 @@
 - import_playbook: rancher.yml
 
 - import_playbook: traefik-dashboard.yml
+
+- import_playbook: metrics-verify.yml

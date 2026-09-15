@@ -374,3 +374,6 @@ async function openPodDebug(pod,options={}){
  dialog.addEventListener('pointerleave',()=>{if(!drag)dialog.style.removeProperty('cursor')});
  dialog.addEventListener('close',()=>{finish();for(const key of ['margin','left','top','right','bottom','width','height','cursor'])dialog.style.removeProperty(key)});
 })();
+
+const metricsInstall=element('button','Включить Metrics Server','button secondary');metricsInstall.type='button';metricsInstall.onclick=()=>labOpen('Включить Metrics Server','Встроенный компонент k3s будет включён на существующих master по очереди. Во время перезапуска k3s API может быть кратковременно недоступен. VM и приложения сохраняются.',()=>labAction('metrics_install',{}));
+$('graph-refresh').after(metricsInstall);

@@ -43,6 +43,10 @@ module Creation
   def creation_plan(params)
     cfg = settings
     old = inventory
+    metrics = params.fetch('metrics_enabled', Dir.glob(File.join(@root, '.vagrant/machines/*/*/id')).empty? || !(cfg['disabled_components'] || []).include?('metrics-server'))
+    raise 'Invalid metrics selection' unless [true, false, 'true', 'false'].include?(metrics)
+    disabled = (cfg['disabled_components'] || []).reject { |c| c == 'metrics-server' }
+    disabled << 'metrics-server' unless [true, 'true'].include?(metrics)
     rancher = params.fetch('rancher_enabled', cfg['rancher_enabled'])
     raise 'Неверный выбор Rancher' unless [true, false, 'true', 'false'].include?(rancher)
     rancher = [true, 'true'].include?(rancher)
@@ -85,6 +89,7 @@ module Creation
         unchanged &&= g['hosts'].values.all? { |h| h.fetch('vm_cpus',cfg['vm_cpus'][role]) == cpu[role] && h.fetch('vm_memory_mb',cfg['vm_memory_mb'][role]) == ram[role] && h.fetch('vm_disk_gb',cfg.fetch('vm_disk_gb',{}).fetch(role,25)) == disk[role] }
       end
       raise 'В выбранном кластере уже есть VM. Для второго кластера нажмите «Новый кластер» и задайте отдельную подсеть. CPU/ОЗУ текущих узлов меняйте через «Настроить», состав — через добавление и удаление узлов. Для смены сети или диска требуется пересоздание выбранного кластера.' unless unchanged
+      raise 'Use the Metrics Server action for existing clusters' if disabled != (cfg['disabled_components'] || [])
       raise 'Выбор компонентов существующего кластера меняйте отдельной командой установки Rancher' if rancher != cfg['rancher_enabled']
       return [old, {}]
     end
@@ -98,7 +103,7 @@ module Creation
         generated['all']['children'][role]['hosts'][name] = {'ansible_host'=>IPAddr.new(network.to_i+start+i,Socket::AF_INET).to_s,'vagrant_id'=>name,'vm_cpus'=>cpu[role],'vm_memory_mb'=>ram[role],'vm_disk_gb'=>disk[role]}
       end
     end
-    [generated, {'rancher_enabled'=>rancher,'vm_cpus'=>cpu,'vm_memory_mb'=>ram,'vm_disk_gb'=>disk,'private_network_prefix'=>prefix}]
+    [generated, {'disabled_components'=>disabled,'rancher_enabled'=>rancher,'vm_cpus'=>cpu,'vm_memory_mb'=>ram,'vm_disk_gb'=>disk,'private_network_prefix'=>prefix}]
   end
 
   def create_with_resources(params)

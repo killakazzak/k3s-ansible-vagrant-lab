@@ -5,7 +5,13 @@ from lab_apps import Apps, validate, namespace, templates
 
 def main():
     root=Path(sys.argv[1]);data=json.load(sys.stdin) if len(sys.argv)<3 else {'action':sys.argv[2],'params':{}};action=data['action'];params=data.get('params',{});apps=Apps(root)
-    if action=='rancher_install':
+    if action=='metrics_install':
+        source=Path(__file__).resolve().parent.parent
+        for name in ('metrics-enable.yml','metrics-verify.yml'):
+            target=root/'ansible'/name
+            if not target.exists():target.symlink_to(source/'ansible'/name)
+        subprocess.run(['bash',str(root/'scripts/install-metrics.sh')],cwd=root,check=True)
+    elif action=='rancher_install':
         subprocess.run(['bash',str(root/'scripts/install-rancher.sh')],cwd=root,check=True)
     elif action in ('stand_stop','stand_start'):
         print('TASK ['+('Остановка VM с сохранением дисков' if action=='stand_stop' else 'Запуск сохранённых VM')+']',flush=True)

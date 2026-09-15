@@ -94,6 +94,8 @@ async function refresh(){
 }
 async function loadLinks(){const cluster=selectedCluster;if(state && !state.nodes.length){for(const name of ['rancher','traefik']){const a=$(name+'-link');a.removeAttribute('href');a.textContent='Появится после создания кластера'}return;}try{const links=await api('links');if(cluster!==selectedCluster)return;for(const name of ['rancher','traefik']){const a=$(name+'-link');if(state && !state[name]){a.textContent='Отключён в конфигурации';a.removeAttribute('href');continue}const url=new URL(links[name]);if(url.protocol!=='https:')throw Error('Некорректная ссылка');a.href=url.href;a.textContent=url.hostname+' ↗'}}catch(e){if(cluster!==selectedCluster)return;for(const name of ['rancher','traefik'])$(name+'-link').textContent='Адрес недоступен';error(e.message)}}
 function componentChoice(){
+ const metricsLabel=element('label');const metrics=element('select');metrics.name='metrics_enabled';metrics.id='field-metrics_enabled';metricsLabel.htmlFor=metrics.id;metricsLabel.textContent='Метрики CPU/RAM';for(const [value,text] of [['true','Включены — Metrics Server'],['false','Не устанавливать']]){const o=element('option',text);o.value=value;metrics.append(o)}$('fields').append(metricsLabel,metrics);
+
  const label=element('label','Компоненты');label.htmlFor='field-rancher_enabled';
  const select=element('select');select.id='field-rancher_enabled';select.name='rancher_enabled';
  for(const [value,text] of [['false','Быстрый старт: Kubernetes + Traefik'],['true','Kubernetes + Traefik + Rancher']]){const option=element('option',text);option.value=value;select.append(option)}

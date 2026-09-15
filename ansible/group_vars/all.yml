@@ -25,7 +25,7 @@ service_subnet: 10.43.0.0/16
 cluster_dns: 10.43.0.10
 flannel_backend: vxlan
 # Fast/minimal profile; remove items to enable bundled components on a new cluster.
-disabled_components: [metrics-server]
+disabled_components: []
 server_taints: ['node-role.kubernetes.io/control-plane:NoSchedule']
 dns_servers: [1.1.1.1, 1.0.0.1]
 dns_over_tls: true
