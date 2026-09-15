@@ -82,3 +82,23 @@ def free_name(base,names):
         candidate=base+'-'+str(index)
         if not any(n==candidate or n.startswith(candidate+'-') or n.startswith('data-'+candidate+'-') for n in names):return candidate
     raise ValueError('Не удалось подобрать имя. Измените основу имени.')
+
+
+def editor_storage(apps,data):
+    import re
+    ns=namespace(data.get('namespace'),True)
+    objects=apps.get('pvc,secrets,pods,deployments,statefulsets,daemonsets,jobs,cronjobs',ns)['items']
+    credentials=sorted(o['metadata']['name'] for o in objects if o['kind']=='Secret' and o.get('data',{}).get('password'))
+    claims=[]
+    for o in objects:
+        if o['kind']!='PersistentVolumeClaim':continue
+        name=o['metadata']['name'];phase=o.get('status',{}).get('phase','Pending')
+        reason=''
+        if o['metadata'].get('deletionTimestamp'):reason='удаляется'
+        elif phase!='Bound':reason=phase
+        elif o.get('spec',{}).get('volumeMode','Filesystem')!='Filesystem':reason='не Filesystem'
+        elif claim_referenced(name,objects):reason='занят приложением'
+        match=re.fullmatch(r'data-(.+)-[0-9]+',name)
+        candidate=match[1]+'-auth' if match else ''
+        claims.append(dict(name=name,available=not reason,reason=reason,capacity=o.get('status',{}).get('capacity',{}).get('storage',''),secret=candidate if candidate in credentials else ''))
+    return dict(pvcs=sorted(claims,key=lambda p:p['name']),secrets=credentials)

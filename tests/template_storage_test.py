@@ -63,3 +63,13 @@ class TemplateStorageTests(unittest.TestCase):
   app=Mock();app.get.return_value={'items':[{'metadata':{'name':'data-postgres-1-0'}}]}
   self.assertEqual(storage.suggest_name(app,dict(base='postgres',namespace='dev',reserved=['postgres-2']))['name'],'postgres-3')
   self.assertEqual(app.get.call_args.args[1],'dev');app.apply.assert_not_called()
+
+ def test_editor_pvc_choices_and_secret_hint(self):
+  app=Mock();app.get.return_value={'items':[
+   dict(kind='PersistentVolumeClaim',metadata=dict(name='data-db-0'),spec={},status=dict(phase='Bound',capacity=dict(storage='2Gi'))),
+   dict(kind='PersistentVolumeClaim',metadata=dict(name='busy'),spec={},status=dict(phase='Bound')),
+   dict(kind='Pod',spec=dict(volumes=[dict(persistentVolumeClaim=dict(claimName='busy'))])),
+   dict(kind='Secret',metadata=dict(name='db-auth'),data=dict(password='PRIVATE'))]}
+  result=storage.editor_storage(app,dict(namespace='dev'));claims={p['name']:p for p in result['pvcs']}
+  self.assertTrue(claims['data-db-0']['available']);self.assertEqual(claims['data-db-0']['secret'],'db-auth')
+  self.assertFalse(claims['busy']['available']);self.assertNotIn('PRIVATE',str(result));app.apply.assert_not_called()

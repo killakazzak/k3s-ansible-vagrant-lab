@@ -71,16 +71,31 @@ function openTemplateEditor(template){
   const field=(name,label,value,type='text',options=null)=>labField(name,label,value??'',type,options,fields);
   const type=field('type','Приложение',a.type,'text',Object.keys(catalogDefaults));const nameInput=field('name','Имя приложения',a.name);nameInput.addEventListener('input',()=>{items[active].name=nameInput.value;head.querySelector('strong').textContent=nameInput.value;drawList()});field('namespace','Namespace',a.namespace);field('image','Образ с версией',a.image);field('port','Порт контейнера',a.port,'number');field('replicas','Реплики',a.replicas,'number');field('cpu','CPU, millicores',a.cpu,'number');field('memory','RAM, MiB',a.memory,'number');field('storage','Диск, GiB',a.storage,'number');
   const mode=field('storage_mode','Хранилище',a.storage_mode||'none','text',[{value:'none',label:'Без PVC'},{value:'new',label:'Новый PVC'},{value:'existing',label:'Существующий PVC'}]);
-  const pvc=field('pvc','Имя существующего PVC',a.pvc);const secret=field('storage_secret','Secret с прежним паролем',a.storage_secret);const mount=field('mount_path','Путь монтирования',a.mount_path||'/data');const host=field('host','URL: префикс или hostname',a.host);host.required=false;
+  const pvc=field('pvc','Существующий PVC',a.pvc,'text',[{value:a.pvc||'',label:a.pvc||'Выберите PVC'}]);const secret=field('storage_secret','Secret с прежним паролем',a.storage_secret,'text',[{value:a.storage_secret||'',label:a.storage_secret||'Выберите Secret'}]);const mount=field('mount_path','Путь монтирования',a.mount_path||'/data');const host=field('host','URL: префикс или hostname',a.host);host.required=false;
   if(a.type==='rabbitmq')field('shovel','Shovel',String(a.shovel===true||a.shovel==='true'),'text',[{value:'false',label:'Выключен'},{value:'true',label:'Включён'}]);
   const storageState=()=>{const existing=mode.value==='existing',needsSecret=existing&&['postgres','rabbitmq'].includes(type.value);pvc.required=existing;pvc.parentElement.hidden=!existing;secret.required=needsSecret;secret.parentElement.hidden=!needsSecret;mount.required=mode.value!=='none';mount.parentElement.hidden=mode.value==='none';};mode.onchange=storageState;storageState();
   type.onchange=()=>{capture();const d=catalogDefaults[type.value],db=['postgres','redis','kafka','rabbitmq'].includes(type.value);Object.assign(items[active],{image:d.image,port:d.port,memory:d.memory,replicas:1,storage_mode:db?'new':'none',pvc:'',storage_secret:'',shovel:false});draw()};
   const storageResult=element('div','Проверяем хранилище…','storage-validation');storageResult.setAttribute('role','status');panel.append(storageResult);
   let storageTimer,storageRevision=0;
   const checkStorage=()=>{clearTimeout(storageTimer);const revision=++storageRevision;storageResult.className='storage-validation';storageResult.textContent='Проверяем хранилище на выбранном кластере…';storageTimer=setTimeout(async()=>{if(!storageResult.isConnected||labCluster!==selectedCluster)return;const app={...items[active]};for(const input of fields.querySelectorAll('input,select'))app[input.name]=input.value;
+   if(app.storage_mode==='existing'&&(!app.pvc||(['postgres','rabbitmq'].includes(app.type)&&!app.storage_secret))){storageResult.textContent='Выберите свободный PVC и Secret с прежним паролем базы, если он требуется.';storageResult.className='storage-validation';return}
    try{const response=await api('templates',{operation:'check-storage',app});if(revision!==storageRevision||!storageResult.isConnected||labCluster!==selectedCluster)return;storageResult.textContent='✓ '+response.message;storageResult.className='storage-validation success'}catch(e){if(revision!==storageRevision||!storageResult.isConnected||labCluster!==selectedCluster)return;storageResult.textContent='⚠ '+e.message;storageResult.className='storage-validation failed'}
   },650)};
-  fields.addEventListener('input',checkStorage);fields.addEventListener('change',checkStorage);checkStorage();
+  let storageChoices=[],choiceRevision=0;
+  const nsInput=fields.querySelector('[name="namespace"]');
+  const loadChoices=async()=>{const revision=++choiceRevision,ns=nsInput.value,cluster=selectedCluster;if(mode.value!=='existing')return;
+   pvc.disabled=true;secret.disabled=true;storageResult.textContent='Получаем PVC выбранного namespace…';
+   try{const data=await api('templates',{operation:'editor-storage',namespace:ns});if(revision!==choiceRevision||!pvc.isConnected||ns!==nsInput.value||cluster!==selectedCluster)return;
+    const previous=pvc.value,previousSecret=secret.value;storageChoices=data.pvcs;pvc.replaceChildren();pvc.append(new Option(data.pvcs.length?'Выберите PVC':'В этом namespace нет PVC',''));
+    for(const item of data.pvcs){const option=new Option(item.name+' · '+item.capacity+(item.available?' · свободен':' · '+item.reason),item.name);option.disabled=!item.available;pvc.append(option)}
+    if(data.pvcs.some(p=>p.name===previous&&p.available))pvc.value=previous;
+    secret.replaceChildren();secret.append(new Option('Выберите Secret с ключом password',''));for(const name of data.secrets)secret.append(new Option(name,name));if(data.secrets.includes(previousSecret))secret.value=previousSecret;
+    if(!data.pvcs.some(p=>p.available)){storageRevision++;clearTimeout(storageTimer);storageResult.textContent='⚠ Свободных готовых PVC в namespace '+ns+' нет. Создайте новый PVC или освободите существующий.';storageResult.className='storage-validation failed'}else checkStorage();
+   }catch(e){if(revision===choiceRevision&&pvc.isConnected){pvc.replaceChildren(new Option('Не удалось загрузить PVC',''));secret.replaceChildren(new Option('Не удалось загрузить Secrets',''));storageRevision++;clearTimeout(storageTimer);storageResult.textContent='⚠ '+e.message;storageResult.className='storage-validation failed'}}finally{if(revision===choiceRevision){pvc.disabled=false;secret.disabled=false}}
+  };
+  pvc.addEventListener('change',()=>{const match=storageChoices.find(p=>p.name===pvc.value);secret.value=match?.secret||'';checkStorage()});
+  mode.addEventListener('change',loadChoices);nsInput.addEventListener('input',()=>{choiceRevision++;storageChoices=[];pvc.replaceChildren(new Option('Выберите PVC',''));secret.replaceChildren(new Option('Выберите Secret',''))});nsInput.addEventListener('change',loadChoices);
+  fields.addEventListener('input',checkStorage);fields.addEventListener('change',checkStorage);if(mode.value==='existing')loadChoices();else checkStorage();
   panel.append(element('p','Лимиты CPU/RAM = 2 × запрос. PVC и Secret должны находиться в namespace приложения. Для баз доступна одна реплика.','lab-note'));drawList();
  };draw();
 }
