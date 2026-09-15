@@ -503,6 +503,21 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     warning = 'IngressRoute Traefik недоступны; показаны стандартные Ingress.'
                 result = topology.build(data['items'])
+                try:
+                    metrics = json.loads(capture(['./kubectl.sh', 'get', '--raw', '/apis/metrics.k8s.io/v1beta1/pods', '--request-timeout=3s'], 5))
+                    topology.attach_metrics(result, metrics.get('items', []))
+                except Exception:
+                    from concurrent.futures import ThreadPoolExecutor
+                    root = active_root(); env = cluster_env(root)
+                    def summary(node):
+                        try:
+                            proc = subprocess.run([str(root/'kubectl.sh'), 'get', '--raw', '/api/v1/nodes/'+node['name']+'/proxy/stats/summary', '--request-timeout=3s'], cwd=root, env=env, capture_output=True, text=True, timeout=5)
+                            return json.loads(proc.stdout).get('pods', []) if proc.returncode == 0 else []
+                        except Exception:
+                            return []
+                    with ThreadPoolExecutor(max_workers=4) as pool:
+                        for samples in pool.map(summary, result['nodes']):
+                            topology.attach_summary(result, samples)
                 result.update(updated=time.time(), warning=warning)
                 return self.reply(200, result)
             if path == '/api/status':

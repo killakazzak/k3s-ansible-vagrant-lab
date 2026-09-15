@@ -146,3 +146,5 @@
 #lab-dialog.debug-dialog,#lab-dialog.diagnostics-dialog{resize:none}
 #lab-dialog.debug-expanded,#lab-dialog.diagnostics-expanded{inset:0!important;margin:auto!important}
 #lab-dialog.dialog-resizing,#lab-dialog.dialog-resizing *{user-select:none!important;cursor:inherit!important}
+
+.container-usage{display:flex;flex-direction:column;gap:2px;margin:3px 0}.container-usage small{font-size:10px;color:#71877b;white-space:nowrap;font-variant-numeric:tabular-nums}.pod-usage-total{font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}

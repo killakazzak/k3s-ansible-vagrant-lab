@@ -48,3 +48,35 @@ def build(items):
                 for backend in route.get('services',[]):
                     routes.append(dict(id=key+':'+str(len(routes)),name=name,namespace=ns,kind=kind,host=route.get('match',''),path='',controller='Traefik',service=(backend.get('namespace',ns)+'/'+backend['name']) if backend.get('kind','Service')=='Service' else None,internal=backend.get('name') if backend.get('kind')=='TraefikService' else None,port=backend.get('port',''),tls='tls' in spec))
     return dict(nodes=nodes,services=services,pods=pods,routes=routes,endpoints=endpoints)
+
+
+def attach_metrics(result, items):
+    """Attach only observed usage; missing container samples remain unknown."""
+    from lab_apps import resource_quantity
+    indexed = {(m.get('metadata', {}).get('namespace'), m.get('metadata', {}).get('name')): m for m in items}
+    for pod in result['pods']:
+        sample = indexed.get((pod['namespace'], pod['name']), {})
+        containers = {c['name']: c.get('usage', {}) for c in sample.get('containers', [])}
+        for container in pod['containers']:
+            usage = containers.get(container['name'], {})
+            if 'cpu' not in usage or 'memory' not in usage:
+                continue
+            try:
+                container['usage'] = dict(cpu=resource_quantity(usage['cpu'])*1000, memory=resource_quantity(usage['memory'])/1024**2, timestamp=sample.get('timestamp'), window=sample.get('window'))
+            except ValueError:
+                continue
+
+
+def attach_summary(result, samples):
+    indexed = {(p['namespace'], p['name']): p for p in result['pods']}
+    for sample in samples:
+        ref = sample.get('podRef', {})
+        pod = indexed.get((ref.get('namespace'), ref.get('name')))
+        if not pod:
+            continue
+        containers = {c['name']: c for c in sample.get('containers', [])}
+        for container in pod['containers']:
+            sample = containers.get(container['name'], {})
+            cpu, memory = sample.get('cpu', {}), sample.get('memory', {})
+            if 'usageNanoCores' in cpu and 'workingSetBytes' in memory:
+                container['usage'] = dict(cpu=cpu['usageNanoCores']/1e6, memory=memory['workingSetBytes']/1024**2, timestamp=cpu.get('time'), window='kubelet')
