@@ -60,6 +60,7 @@ function renderProgress() {
   }
 }
 function render() {
+  if(typeof renderMetricsServer==='function')renderMetricsServer({enabled:state.metricsEnabled,exists:state.exists});
   const ready=state.nodes.filter(n=>n.state==='Ready').length;
   $('health').textContent=state.exists===false?'Не создан':state.paused?'Остановлен':state.reachable?'На связи':'Недоступен';
   $('health-detail').textContent=state.exists===false?'ВМ удалены. Сохранена только конфигурация.':state.paused?'VM выключены, диски и данные сохранены.':state.reachable?'Kubernetes API отвечает':'Нет подключения к API';
@@ -83,7 +84,7 @@ function render() {
   renderNodeUsage();
   renderProgress();
 }
-function setBusy(value){busy=value;$('cluster-select').disabled=clusterCount===0;$('new-cluster').disabled=value;$('create-cluster').disabled=value;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=value || (!!state && !state.nodes.length && !['create'].includes(b.dataset.action)))}
+function setBusy(value){busy=value;if(typeof renderMetricsServer==='function')renderMetricsServer();$('cluster-select').disabled=clusterCount===0;$('new-cluster').disabled=value;$('create-cluster').disabled=value;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=value || (!!state && !state.nodes.length && !['create'].includes(b.dataset.action)))}
 async function refresh(){
   while(refreshPromise){await refreshPromise;}
   const cluster=selectedCluster;

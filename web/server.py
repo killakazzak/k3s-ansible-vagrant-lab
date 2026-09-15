@@ -232,7 +232,7 @@ def config():
                               ram=host.get('vm_memory_mb', cfg['vm_memory_mb'][role]),
                               disk=host.get('vm_disk_gb', cfg.get('vm_disk_gb', {}).get(role,25)), vagrant_id=host['vagrant_id']))
     return dict(node_prefix=('k8s-cluster1' if cfg.get('menu_node_prefix', 'k3s') == 'k3s' else cfg['menu_node_prefix']), nodes=nodes, defaults={role:dict(cpu=cfg['vm_cpus'][role],ram=cfg['vm_memory_mb'][role],disk=cfg.get('vm_disk_gb',{}).get(role,25)) for role in ['server','workers']}, network=str(ipaddress.ip_network(str(nodes[0]['ip'])+'/'+str(cfg['private_network_prefix']) if nodes else cfg.get('private_network_cidr','192.168.58.0/24'), strict=False)), version=cfg['k3s_version'], provider=cfg['vm_provider'],
-                rancher=cfg.get('rancher_enabled', False), traefik=cfg.get('traefik_dashboard_enabled', False)
+                metricsEnabled='metrics-server' not in cfg.get('disabled_components', []), rancher=cfg.get('rancher_enabled', False), traefik=cfg.get('traefik_dashboard_enabled', False)
                 and 'traefik' not in cfg['disabled_components'])
 
 
@@ -503,9 +503,11 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     warning = 'IngressRoute Traefik недоступны; показаны стандартные Ingress.'
                 result = topology.build(data['items'])
+                result['metricsServer'] = {'ready': False, 'installed': any(o.get('kind') == 'Deployment' and o.get('metadata', {}).get('namespace') == 'kube-system' and o.get('metadata', {}).get('name') == 'metrics-server' for o in data['items'])}
                 try:
                     metrics = json.loads(capture(['./kubectl.sh', 'get', '--raw', '/apis/metrics.k8s.io/v1beta1/pods', '--request-timeout=3s'], 5))
                     topology.attach_metrics(result, metrics.get('items', []))
+                    result['metricsServer']['ready'] = bool(metrics.get('items'))
                 except Exception:
                     from concurrent.futures import ThreadPoolExecutor
                     root = active_root(); env = cluster_env(root)

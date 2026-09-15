@@ -377,3 +377,18 @@ async function openPodDebug(pod,options={}){
 
 const metricsInstall=element('button','Включить Metrics Server','button secondary');metricsInstall.type='button';metricsInstall.onclick=()=>labOpen('Включить Metrics Server','Встроенный компонент k3s будет включён на существующих master по очереди. Во время перезапуска k3s API может быть кратковременно недоступен. VM и приложения сохраняются.',()=>labAction('metrics_install',{}));
 $('graph-refresh').after(metricsInstall);
+
+const metricsStates=new Map();
+function renderMetricsServer(update={}){
+ const current={...(metricsStates.get(selectedCluster)||{}),...update};metricsStates.set(selectedCluster,current);
+ const installing=activeJob?.cluster===selectedCluster&&activeJob.action==='metrics_install'&&activeJob.state==='running';
+ const locked=!!activeJob&&activeJob.state==='running';
+ const ready=current.ready===true;
+ const enabled=current.enabled===true||current.installed===true;
+ metricsInstall.classList.toggle('metrics-ready',ready&&!installing);
+ metricsInstall.disabled=locked||ready||enabled||current.enabled===undefined||current.exists===false;
+ metricsInstall.textContent=installing?'Metrics Server · включается…':ready?'✓ Metrics Server работает':enabled?'Metrics Server включён · ждём метрики':current.enabled===false?'Включить Metrics Server':'Metrics Server · проверяем…';
+ metricsInstall.title=ready?'Metrics API доступен':enabled?'Метрики пока недоступны. Обновите карту или проверьте Pod metrics-server в kube-system.':'Включить встроенный Metrics Server';
+}
+metricsInstall.disabled=true;metricsInstall.textContent='Metrics Server · проверяем…';
+$('cluster-select').addEventListener('change',()=>renderMetricsServer());

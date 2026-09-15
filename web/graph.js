@@ -106,12 +106,12 @@ async function refreshGraph(){
  const cluster=selectedCluster;
  if(graphCluster!==cluster){graphData=null;$('pod-map').replaceChildren();graphSignature='';$('graph-route-info').replaceChildren();$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-detail').textContent='Загружаем карту выбранного кластера…';}
  $('graph-status').textContent='Получаем данные Kubernetes…';
- try{const data=await api('topology');if(cluster!==selectedCluster)return;const old=$('graph-route').value;const signature=JSON.stringify([cluster,data.nodes,data.services,data.pods,data.routes,data.endpoints]);const changed=signature!==graphSignature;graphSignature=signature;graphCluster=cluster;graphData=data;drawPlacement();$('graph-route').replaceChildren();
+ try{const data=await api('topology');if(cluster!==selectedCluster)return;renderMetricsServer(data.metricsServer||{ready:false});const old=$('graph-route').value;const signature=JSON.stringify([cluster,data.nodes,data.services,data.pods,data.routes,data.endpoints]);const changed=signature!==graphSignature;graphSignature=signature;graphCluster=cluster;graphData=data;drawPlacement();$('graph-route').replaceChildren();
  for(const r of data.routes){const o=document.createElement('option');o.value=r.id;o.textContent=`${routeURLs(r)[0]||r.host+' '+r.path} → ${r.namespace}/${r.name}`;$('graph-route').append(o)}
  if(data.routes.some(r=>r.id===old))$('graph-route').value=old;
  else {const demo=data.routes.find(r=>r.host.startsWith('nginx.'));if(demo)$('graph-route').value=demo.id;}
  $('graph-status').textContent=(data.warning?data.warning+' · ':'')+'Обновлено '+new Date(data.updated*1000).toLocaleTimeString();if(changed){$('graph-detail').textContent='Нажмите на Ingress, Service, Pod или узел — здесь появятся подробности.';drawGraph();}
- }catch(e){if(cluster===selectedCluster){graphData=null;$('pod-map').replaceChildren();graphSignature='';$('graph-route-info').replaceChildren();$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-status').textContent=e.message;$('graph-detail').textContent='Карта недоступна. Проверьте состояние выбранного кластера.';}}
+ }catch(e){if(cluster===selectedCluster){renderMetricsServer({ready:false});graphData=null;$('pod-map').replaceChildren();graphSignature='';$('graph-route-info').replaceChildren();$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-status').textContent=e.message;$('graph-detail').textContent='Карта недоступна. Проверьте состояние выбранного кластера.';}}
  finally{graphLoading=false;if(cluster!==selectedCluster)refreshGraph();}
 }
 $('graph-route').onchange=drawGraph;$('graph-refresh').onclick=refreshGraph;$('cluster-select').addEventListener('change',refreshGraph);
