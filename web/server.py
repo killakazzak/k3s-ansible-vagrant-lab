@@ -265,7 +265,7 @@ def status():
             live=json.loads(capture(['./kubectl.sh','get','nodes','-o','json','--request-timeout=5s'],8))
             for n in live['items']:
                 st=n.get('status',{});cap=st.get('capacity',{});labels=n['metadata'].get('labels',{})
-                result['nodes'].append(dict(name=n['metadata']['name'],role='server' if any(k in labels for k in ('node-role.kubernetes.io/control-plane','node-role.kubernetes.io/master')) else 'workers',ip=next((a['address'] for a in st.get('addresses',[]) if a['type']=='InternalIP'),'—'),cpu=cap.get('cpu','—'),ram=lab_apps.resource_quantity(cap.get('memory','0'))/1024**2,disk='—',state='Ready' if any(c['type']=='Ready' and c['status']=='True' for c in st.get('conditions',[])) else 'NotReady'))
+                result['nodes'].append(dict(actual_version=st.get('nodeInfo',{}).get('kubeletVersion'),name=n['metadata']['name'],role='server' if any(k in labels for k in ('node-role.kubernetes.io/control-plane','node-role.kubernetes.io/master')) else 'workers',ip=next((a['address'] for a in st.get('addresses',[]) if a['type']=='InternalIP'),'—'),cpu=cap.get('cpu','—'),ram=lab_apps.resource_quantity(cap.get('memory','0'))/1024**2,disk='—',state='Ready' if any(c['type']=='Ready' and c['status']=='True' for c in st.get('conditions',[])) else 'NotReady'))
             result['reachable']=True
         except Exception:
             result['error']='Удалённый API недоступен или нет права просмотра узлов. Проверьте VPN и kubeconfig.'
