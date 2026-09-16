@@ -5,7 +5,25 @@ from lab_apps import Apps, validate, namespace, templates
 
 def main():
     root=Path(sys.argv[1]);data=json.load(sys.stdin) if len(sys.argv)<3 else {'action':sys.argv[2],'params':{}};action=data['action'];params=data.get('params',{});apps=Apps(root)
-    if action=='metrics_install':
+    if action=='app_change_kind':
+        import workload_types
+        workload_types.migrate(apps,params)
+    elif action=='app_edit':
+        import app_editor
+        app_editor.edit(apps,params)
+    elif action in ('remote_ingress_update','remote_ingress_delete'):
+        import remote_ingress
+        remote_ingress.manage(Path(__file__).resolve().parents[1],os.environ,root,params,action=='remote_ingress_delete')
+    elif action=='remote_traefik_publish':
+        import traefik_public
+        traefik_public.publish(Path(__file__).resolve().parents[1],os.environ,root,params)
+    elif action=='remote_rancher_install':
+        import remote_rancher
+        remote_rancher.install(Path(__file__).resolve().parents[1],os.environ,root,params)
+    elif action=='remote_ingress_install':
+        import remote_ingress
+        remote_ingress.install(Path(__file__).resolve().parents[1],os.environ,root,params)
+    elif action=='metrics_install':
         source=Path(__file__).resolve().parent.parent
         for name in ('metrics-enable.yml','metrics-verify.yml'):
             target=root/'ansible'/name
@@ -72,15 +90,22 @@ def main():
         from lab_apps import dns, MANAGER
         targets=params.get('apps',[])
         if not isinstance(targets,list) or not 1<=len(targets)<=50:raise ValueError('Выберите от 1 до 50 приложений')
-        workloads={}
+        workloads={};argo_targets=[]
         for target in targets:
             kind=target.get('kind');ns=namespace(target.get('namespace'),True);name=dns(target.get('name'))
             if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный тип приложения')
-            obj=apps.get(kind,ns,name);workloads[(kind,ns,name)]=obj
+            obj=apps.get(kind,ns,name)
+            if obj['metadata'].get('labels',{}).get('lab.k3s/type')=='argocd' and obj['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER:
+                if (ns,name) not in argo_targets:argo_targets.append((ns,name))
+                continue
+            workloads[(kind,ns,name)]=obj
             if obj['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER:
                 panel=apps.find('Deployment',ns,name+'-ui')
                 if panel and panel['metadata'].get('labels',{}).get('lab.k3s/panel-for')==name and panel['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER:
                     workloads[('Deployment',ns,name+'-ui')]=panel
+        for ns,name in argo_targets:
+            from argocd_bundle import lifecycle
+            lifecycle(apps,ns,name,action)
         for (kind,ns,name),obj in workloads.items():
             target=kind.lower()+'/'+name
             print('TASK ['+action+' '+ns+'/'+name+']',flush=True)
@@ -109,7 +134,11 @@ def main():
                 kind=target.get('kind');ns=namespace(target.get('namespace'),True);name=target.get('name')
                 if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный тип приложения')
                 from lab_apps import dns
-                name=dns(name);apps.get(kind,ns,name)
+                name=dns(name);obj=apps.get(kind,ns,name)
+                if (root/'connection.json').is_file():
+                    from lab_apps import MANAGER
+                    labels=obj['metadata'].get('labels',{})
+                    if labels.get('app.kubernetes.io/managed-by')!=MANAGER or labels.get('lab.k3s/panel-for'):raise ValueError('Удалять можно только приложения каталога')
                 item=dict(kind=kind,namespace=ns,name=name,delete_data=False)
                 if item not in checked:checked.append(item)
             for target in checked:

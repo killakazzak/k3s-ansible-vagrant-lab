@@ -19,14 +19,17 @@ const PodFilters = (() => {
   if(!selected.length||selected.some(c=>!Number.isFinite(c.usage?.[key])))return null;
   return selected.reduce((sum,c)=>sum+c.usage[key],0);
  };
+ const age=(p,now=Date.now())=>{const created=Date.parse(p.created);return Number.isFinite(created)?Math.max(0,Math.floor((now-created)/1000)):null};
+ const formatAge=seconds=>{if(seconds===null)return '—';if(seconds<60)return seconds+' с';if(seconds<3600)return Math.floor(seconds/60)+' мин';if(seconds<86400)return Math.floor(seconds/3600)+' ч '+Math.floor(seconds%3600/60)+' мин';return Math.floor(seconds/86400)+' д '+Math.floor(seconds%86400/3600)+' ч'};
  function apply(pods,filter){
   const nameQuery=(filter.podName||'').trim().toLowerCase();
   const items=pods.filter(p=>String(p.name||'').toLowerCase().includes(nameQuery)&&(!filter.podStatus||statuses(p).includes(filter.podStatus))&&(!filter.podContainer||containers(p).includes(filter.podContainer))&&(!filter.podNode||node(p)===filter.podNode));
   const value=p=>filter.podSort==='status'?status(p):filter.podSort==='container'?containers(p).join(', '):filter.podSort==='node'?node(p):p.name;
   const direction=filter.podDirection==='desc'?-1:1;
+  if(filter.podSort==='age')return items.sort((a,b)=>{const x=age(a),y=age(b);return x===null?(y===null?compare(a.name,b.name):1):y===null?-1:direction*(x-y)||compare(a.name,b.name)});
   if(['cpu','memory'].includes(filter.podSort))return items.sort((a,b)=>{const x=usage(a,filter.podSort,filter.podContainer),y=usage(b,filter.podSort,filter.podContainer);return x===null?(y===null?compare(a.name,b.name):1):y===null?-1:direction*(x-y)||compare(a.name,b.name)});
   return items.sort((a,b)=>direction*(compare(value(a),value(b))||compare(a.namespace+'/'+a.name,b.namespace+'/'+b.name)));
  }
- return {containers,status,statuses,node,apply,compare,usage};
+ return {containers,status,statuses,node,apply,compare,usage,age,formatAge};
 })();
 if(typeof module!=='undefined')module.exports=PodFilters;

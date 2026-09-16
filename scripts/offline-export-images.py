@@ -9,6 +9,12 @@ ssh=['ssh','-F',config.name,'-T',args.master]
 pods=json.loads(subprocess.check_output([str(root/'kubectl.sh'),'get','pods','-A','-o','json']))['items']
 images={c['image'] for p in pods for c in p['spec'].get('containers',[])+p['spec'].get('initContainers',[])}
 images.update(v['image'] for v in lab_apps.CATALOG.values() if v['image'])
+images.add(lab_apps.catalog_services.DATABASE_IMAGE)
+images.update(lab_apps.elk_stack.images().values())
+images.update(lab_apps.argocd_bundle.images())
+images.add(lab_apps.catalog_services.loki_stack.ALLOY_IMAGE)
+images.update(['alpine:3.22','registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-v19.3.2','registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:arm64-v19.3.2'])
+images.add('zabbix/zabbix-web-nginx-pgsql:'+lab_apps.CATALOG['zabbix']['image'].rsplit(':',1)[1])
 # Fixed panel and verification images used by the catalogue.
 images.update(['dpage/pgadmin4:9.17','redis/redisinsight:2.70.0','tchiotludo/akhq:0.25.1','python:3.13-alpine','nginx:1.28-alpine','busybox:1.37'])
 def canonical(image):

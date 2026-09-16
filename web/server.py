@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Loopback-only cluster console; standard library, no pip dependencies."""
+"""Local-network cluster console; standard library, no pip dependencies."""
 import sys
 import argparse
 import errno
@@ -16,12 +16,15 @@ import os
 from pathlib import Path
 import secrets
 import statistics
+import job_logs
+from network_access import local_ipv4, valid_authority
+from install_queue import InstallQueue, INSTALL_ACTIONS
 import math
 import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import terminal_sessions
@@ -213,7 +216,8 @@ def new_cluster(name, cidr, params=None):
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.Lock()
 JOB = None
-LAB_ACTIONS = {'metrics_install','rancher_install','rabbit_plugins','app_start','app_stop','app_restart','app_delete','app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
+INSTALL_QUEUE = InstallQueue()
+LAB_ACTIONS = {'app_change_kind','remote_traefik_publish','remote_rancher_install','remote_ingress_update','remote_ingress_delete','app_edit','remote_ingress_install','metrics_install','rancher_install','rabbit_plugins','app_start','app_stop','app_restart','app_delete','app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
 ACTIONS = LAB_ACTIONS | {'create', 'destroy', 'verify', 'add_master', 'add_worker', 'remove_master', 'remove_worker', 'resources', 'version'}
 DESTRUCTIVE = {'app_delete','destroy', 'remove_master', 'remove_worker', 'version'}
 
@@ -396,6 +400,7 @@ def record_duration(key, seconds):
 
 
 def execute(job, payload):
+    job_logs.save(ROOT,job,begin=True)
     try:
         key = timing_key(payload)
         samples = timing_samples(key)
@@ -414,6 +419,7 @@ def execute(job, payload):
         p.stdin.write(json.dumps(payload))
         p.stdin.close()
         for line in p.stdout:
+            job_logs.save(ROOT,job,line=line)
             with LOCK:
                 job['log'] = (job['log'] + line)[-150000:]
         rc = p.wait()
@@ -421,12 +427,14 @@ def execute(job, payload):
             job['state'] = 'success' if rc == 0 else 'failed'
             job['exit_code'] = rc
     except Exception as e:
+        job_logs.save(ROOT,job,line='\n'+str(e))
         with LOCK:
             job['log'] += '\n' + str(e)
             job['state'] = 'failed'
     finally:
         with LOCK:
             job['finished'] = time.time()
+            job_logs.save(ROOT,job)
         if payload['action']=='verify' and 'root' in locals():
             try:
                 folder=root/'.cache';folder.mkdir(exist_ok=True)
@@ -441,6 +449,18 @@ def execute(job, payload):
             except OSError:
                 pass  # Optional timing history must not fail a completed deployment.
 
+
+def execute_queued(job,payload):
+    global JOB
+    try:execute(job,payload)
+    finally:
+        with LOCK:
+            job.pop('dispatching',None)
+            next_install=INSTALL_QUEUE.pop()
+            if next_install:
+                JOB,next_payload=next_install
+                JOB.update(state='running',started=time.time(),dispatching=True)
+                threading.Thread(target=execute_queued,args=(JOB,next_payload),daemon=True).start()
 
 STOPPING = False
 
@@ -463,8 +483,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def allowed(self):
-        expected = '127.0.0.1:' + str(self.server.server_port)
-        if self.headers.get('Host') != expected:
+        expected = self.headers.get('Host', '')
+        if not valid_authority(expected, self.server.server_port):
             self.reply(403, {'error': 'Недопустимый Host'})
             return False
         origin = self.headers.get('Origin')
@@ -484,7 +504,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlsplit(self.path).path
         if path in ('/', '/remote.js', '/app.js', '/style.css', '/vendor/xterm.js', '/vendor/xterm.css', '/vendor/addon-fit.js', '/graph.js', '/apps.js', '/pod-filters.js'):
-            if self.headers.get('Host') != '127.0.0.1:' + str(self.server.server_port):
+            if not valid_authority(self.headers.get('Host'), self.server.server_port):
                 return self.reply(403, {'error': 'Недопустимый Host'})
             file, mime = {'/remote.js': ('remote.js','text/javascript'), '/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css'), '/vendor/xterm.js': ('vendor/xterm.js', 'text/javascript'), '/vendor/xterm.css': ('vendor/xterm.css', 'text/css'), '/vendor/addon-fit.js': ('vendor/addon-fit.js', 'text/javascript'), '/pod-filters.js': ('pod-filters.js', 'text/javascript'), '/graph.js': ('graph.js', 'text/javascript'), '/apps.js': ('apps.js', 'text/javascript')}[path]
             return self.reply(200, (ROOT / 'web' / file).read_bytes(), mime + '; charset=utf-8')
@@ -525,11 +545,26 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(409, {'error':'Карта появится после настройки кластера.'})
                 data = json.loads(capture(['./kubectl.sh', 'get', 'nodes,pods,services,ingresses.networking.k8s.io,endpointslices.discovery.k8s.io,replicasets.apps,deployments.apps,daemonsets.apps,statefulsets.apps,jobs.batch,cronjobs.batch', '-A', '-o', 'json', '--request-timeout=10s'], 15))
                 warning = None
+                # Discover installed APIs first: absence of a vendor CRD is normal.
+                optional=('ingressclasses.networking.k8s.io','ingressroutes.traefik.io','ingressroutetcps.traefik.io','ingressrouteudps.traefik.io','virtualservers.k8s.nginx.org','virtualserverroutes.k8s.nginx.org','transportservers.k8s.nginx.org')
                 try:
-                    extra = json.loads(capture(['./kubectl.sh', 'get', 'ingressroutes.traefik.io', '-A', '-o', 'json', '--request-timeout=5s'], 8))
-                    data['items'].extend(extra.get('items', []))
+                    available=set(capture(['./kubectl.sh','api-resources','--verbs=list','-o','name','--request-timeout=5s'],10).split())
+                    root=active_root();env=cluster_env(root)
+                    from concurrent.futures import ThreadPoolExecutor
+                    def optional_objects(resource):
+                        try:
+                            proc=subprocess.run([str(root/'kubectl.sh'),'get',resource,'-A','-o','json','--request-timeout=5s'],cwd=root,env=env,capture_output=True,text=True,timeout=8)
+                            if proc.returncode:return [],resource
+                            return json.loads(proc.stdout).get('items',[]),None
+                        except Exception:return [],resource
+                    failures=[]
+                    with ThreadPoolExecutor(max_workers=4) as pool:
+                        for objects,failed in pool.map(optional_objects,[name for name in optional if name in available]):
+                            data['items'].extend(objects)
+                            if failed:failures.append(failed)
+                    if failures:warning='Часть ресурсов недоступна (проверьте RBAC): '+', '.join(failures)
                 except Exception:
-                    warning = 'IngressRoute Traefik недоступны; показаны стандартные Ingress.'
+                    warning='Не удалось определить дополнительные API; показаны стандартные Ingress.'
                 result = topology.build(data['items'])
                 result['metricsServer'] = {'ready': False, 'installed': any(o.get('kind') == 'Deployment' and o.get('metadata', {}).get('namespace') == 'kube-system' and o.get('metadata', {}).get('name') == 'metrics-server' for o in data['items'])}
                 try:
@@ -554,9 +589,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, status())
             if path == '/api/links':
                 return self.reply(200, links())
+            if path == '/api/job-log':
+                ident=parse_qs(urlsplit(self.path).query).get('id',[''])[0]
+                with LOCK:current=dict(JOB) if JOB else None
+                return self.reply(200,job_logs.export(ROOT,ident,current))
             if path == '/api/job':
                 with LOCK:
-                    snapshot = dict(JOB) if JOB else None
+                    snapshot = dict(JOB) if JOB else job_logs.latest(ROOT)
+                    if snapshot:snapshot['queue']=INSTALL_QUEUE.summary()
                 return self.reply(200, snapshot)
             return self.reply(404, {'error': 'Не найдено'})
         except Exception as e:
@@ -566,7 +606,7 @@ class Handler(BaseHTTPRequestHandler):
         global JOB, STOPPING
         if not self.allowed():
             return
-        if self.path not in ('/api/connections', '/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods', '/api/app-access', '/api/resource-yaml', '/api/yaml-preview', '/api/yaml-apply'):
+        if self.path not in ('/api/app-settings', '/api/gitlab-secret', '/api/connections', '/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods', '/api/app-access', '/api/resource-yaml', '/api/yaml-preview', '/api/yaml-apply', '/api/resource-delete'):
             return self.reply(404, {'error': 'Не найдено'})
         try:
             length = int(self.headers.get('Content-Length', 0))
@@ -578,8 +618,30 @@ class Handler(BaseHTTPRequestHandler):
             if remote_clusters.external(active_root()):
                 remote_clusters.permit(self.path,data)
             if self.path == '/api/connections':
+                if data.get('operation') in ('rancher-preview','rancher-status'):
+                    import remote_rancher
+                    return self.reply(200,remote_rancher.preview(ROOT,ENV,active_root(),data) if data['operation']=='rancher-preview' else remote_rancher.status(ROOT,ENV,active_root()))
+                if data.get('operation') == 'traefik-credentials':
+                    import traefik_public
+                    return self.reply(200,traefik_public.credentials(ROOT,ENV,active_root()))
+                if data.get('operation') == 'ingress-list':
+                    import remote_ingress
+                    return self.reply(200,dict(controllers=remote_ingress.inventory(ROOT, ENV, active_root())))
+                if data.get('operation') in ('ingress-preview','prepare-helm'):
+                    import remote_ingress
+                    if not (active_root()/'kubeconfig').is_file():raise ValueError('Доступ к Kubernetes ещё не настроен')
+                    return self.reply(200, remote_ingress.prepare_helm(ROOT) if data['operation']=='prepare-helm' else remote_ingress.preview(ROOT, ENV, active_root(), data))
+                if data.get('operation') == 'publication-address':
+                    with LOCK:
+                        address=remote_clusters.publication_ip(active_root(),data.get('ip',''))
+                    return self.reply(200,dict(publicationIP=address))
+                if data.get('operation') == 'app-options':
+                    apps=lab_apps.Apps(active_root(),cluster_env(active_root()))
+                    return self.reply(200,dict(storageClasses=[x['metadata']['name'] for x in apps.get('storageclasses')['items']],ingressClasses=[x['metadata']['name'] for x in apps.get('ingressclasses')['items']],publicationEndpoints=apps.publication_endpoints(),publicationIP=remote_clusters.publication_ip(active_root())))
+                if data.get('operation') == 'verify':
+                    return self.reply(200, remote_clusters.verify(ROOT, ENV, active_root()))
                 with LOCK:
-                    if JOB and JOB['state']=='running':raise ValueError('Дождитесь завершения операции')
+                    if JOB and (JOB['state']=='running' or JOB.get('dispatching')):raise ValueError('Дождитесь завершения операции')
                     operation=data.get('operation')
                     if operation=='contexts':
                         cfg=remote_clusters.parse(ROOT,ENV,data.get('kubeconfig'))
@@ -595,7 +657,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('Неизвестная операция подключения')
             if self.path == '/api/shutdown':
                 with LOCK:
-                    if JOB and JOB['state'] == 'running':
+                    if JOB and (JOB['state'] == 'running' or JOB.get('dispatching')):
                         return self.reply(409, {'error':'Сейчас выполняется операция с кластером. Дождитесь её завершения перед остановкой веб-сервера.'})
                     STOPPING = True
                 self.reply(200, {'ok': True})
@@ -603,6 +665,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if STOPPING:
                 return self.reply(409, {'error':'Веб-сервер завершает работу.'})
+            if self.path == '/api/app-settings':
+                import app_editor
+                return self.reply(200,app_editor.settings(lab_apps.Apps(active_root(),cluster_env(active_root())),data))
+            if self.path == '/api/gitlab-secret':
+                import gitlab_apps
+                with LOCK:
+                    if JOB and (JOB['state']=='running' or JOB.get('dispatching')):raise ValueError('Дождитесь завершения операции')
+                    root=active_root()
+                    if data.get('operation')=='rotate-runner':return self.reply(200,gitlab_apps.rotate_runner_token(lab_apps.Apps(root,cluster_env(root)),data))
+                    return self.reply(201,gitlab_apps.save_secret(lab_apps.Apps(root,cluster_env(root)),data,lab_apps.dns,lab_apps.namespace))
             if self.path == '/api/templates':
                 if data.get('operation') in ('storage-options','check','check-storage','suggest-name','editor-storage'):
                     import template_storage
@@ -619,9 +691,13 @@ class Handler(BaseHTTPRequestHandler):
                     if operation=='from_apps':return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).template_from_apps(data))
                     if operation!='save':raise ValueError('Неизвестная операция с шаблоном')
                     return self.reply(200, lab_apps.save_template(data))
+            if self.path == '/api/resource-delete':
+                with LOCK:
+                    if JOB and JOB['state']=='running':raise ValueError('Дождитесь завершения текущей операции')
+                    return self.reply(200,lab_apps.Apps(active_root(),cluster_env(active_root())).resource_delete(data))
             if self.path in ('/api/yaml-preview','/api/yaml-apply'):
                 with LOCK:
-                    if JOB and JOB['state']=='running':return self.reply(409,{'error':'Дождитесь завершения текущей операции.'})
+                    if JOB and (JOB['state']=='running' or JOB.get('dispatching')):return self.reply(409,{'error':'Дождитесь завершения текущей операции.'})
                     root=active_root();apps=lab_apps.Apps(root,cluster_env(root))
                     for key in list(YAML_PREVIEWS):
                         if YAML_PREVIEWS[key]['expires']<time.time():del YAML_PREVIEWS[key]
@@ -629,12 +705,13 @@ class Handler(BaseHTTPRequestHandler):
                         candidate,diff=apps.yaml_preview(data)
                         token=secrets.token_urlsafe(32)
                         if len(YAML_PREVIEWS)>=32:YAML_PREVIEWS.pop(next(iter(YAML_PREVIEWS)))
-                        YAML_PREVIEWS[token]=dict(root=str(root),candidate=candidate,expires=time.time()+300)
+                        YAML_PREVIEWS[token]=dict(root=str(root),candidate=candidate,operation=data.get('operation','edit'),expires=time.time()+300)
                         return self.reply(200,dict(token=token,diff=diff,changed=bool(diff)))
                     if data.get('confirmed') is not True:raise ValueError('Подтвердите применение изменений')
                     preview=YAML_PREVIEWS.get(data.get('token',''))
                     if not preview or preview['root']!=str(root):raise ValueError('Просмотр изменений устарел. Проверьте YAML повторно.')
-                    result=apps.yaml_apply(preview['candidate'])
+                    result=json.loads(apps.kubectl(['create','-f','-','-o','json'],preview['candidate'])) if preview.get('operation')=='create' else apps.yaml_apply(preview['candidate'])
+                    result=dict(ok=True)
                     del YAML_PREVIEWS[data['token']]
                     return self.reply(200,result)
             if self.path == '/api/resource-yaml':
@@ -674,7 +751,7 @@ class Handler(BaseHTTPRequestHandler):
                 if data.get('confirmed') is not True or not isinstance(data.get('params'), dict):
                     raise ValueError('Подтвердите создание кластера с выбранными параметрами')
                 with LOCK:
-                    if STOPPING or (JOB and JOB['state'] == 'running'):
+                    if STOPPING or (JOB and (JOB['state'] == 'running' or JOB.get('dispatching'))) or INSTALL_QUEUE.items:
                         return self.reply(409, {'error':'Дождитесь текущей операции'})
                     result = new_cluster(data.get('name', ''), data.get('network', ''), data['params'])
                     payload = {'action':'create', 'confirmed':True, 'params':dict(data['params'], network_mode='existing')}
@@ -682,20 +759,54 @@ class Handler(BaseHTTPRequestHandler):
                     threading.Thread(target=execute, args=(JOB, payload), daemon=True).start()
                     return self.reply(201, result)
             action = data.get('action')
+            if action=='cancel_install' and data.get('confirmed') is True:
+                with LOCK:INSTALL_QUEUE.cancel(data.get('params',{}).get('id'))
+                return self.reply(200,{'ok':True})
             if action not in ACTIONS or data.get('confirmed') is not True:
                 raise ValueError('Неизвестная операция или нет подтверждения')
             if action in DESTRUCTIVE and data.get('confirmation') != 'УДАЛИТЬ':
                 raise ValueError('Для удаления данных введите УДАЛИТЬ')
             if not isinstance(data.get('params', {}), dict):
                 raise ValueError('Некорректные параметры')
+            if action in ('remote_ingress_update','remote_ingress_delete'):
+                import remote_ingress
+                if not (active_root()/'kubeconfig').is_file():raise ValueError('Доступ к Kubernetes ещё не настроен')
+                remote_ingress.validate_management(data.get('params',{}),action=='remote_ingress_delete')
+            if action=='remote_ingress_install':
+                import remote_ingress
+                if not (active_root()/'kubeconfig').is_file():raise ValueError('Доступ к Kubernetes ещё не настроен')
+                remote_ingress.validate(data.get('params',{}))
             with LOCK:
-                if STOPPING or (JOB and JOB['state'] == 'running'):
+                if action in INSTALL_ACTIONS:
+                    if STOPPING:raise ValueError('Веб-сервер завершает работу')
+                    cluster=self.headers.get('X-Lab-Cluster','default');cluster_root(cluster)
+                    params=data.get('params',{})
+                    if action=='template_deploy':
+                        import template_storage
+                        configs=template_storage.configs(params)
+                    else:configs=params.get('apps',[])
+                    if not isinstance(configs,list) or not 1<=len(configs)<=10:raise ValueError('Выберите от 1 до 10 приложений')
+                    configs=[lab_apps.validate(c) for c in configs]
+                    payload={'action':'app_deploy','confirmed':True,'params':{'apps':configs}}
+                    waiting=bool(JOB and (JOB['state']=='running' or JOB.get('dispatching'))) or bool(INSTALL_QUEUE.items)
+                    job=dict(cluster=cluster,id=secrets.token_hex(8),action='app_deploy',state='queued',log='',started=time.time(),queued_at=time.time(),targets=[(c['namespace'],c['name']) for c in configs],title=', '.join(c['namespace']+'/'+c['name'] for c in configs))
+                    INSTALL_QUEUE.add(job,payload,JOB)
+                    if not waiting:
+                        JOB,payload=INSTALL_QUEUE.pop();JOB['state']='running';JOB['started']=time.time();JOB['dispatching']=True
+                        threading.Thread(target=execute_queued,args=(JOB,payload),daemon=True).start()
+                    return self.reply(202,{'ok':True,'queued':waiting,'id':job['id'],'position':len(INSTALL_QUEUE.items) if waiting else 0})
+                if STOPPING or (JOB and (JOB['state'] == 'running' or JOB.get('dispatching'))) or INSTALL_QUEUE.items:
                     return self.reply(409, {'error': 'Дождитесь завершения текущей операции'})
                 JOB = dict(cluster=self.headers.get('X-Lab-Cluster', 'default'), id=secrets.token_hex(8), action=action, state='running', log='', started=time.time())
                 threading.Thread(target=execute, args=(JOB, data), daemon=True).start()
             self.reply(202, {'ok': True})
         except (ValueError, TypeError, OSError, subprocess.TimeoutExpired) as e:
             self.reply(400, {'error': str(e)})
+
+
+class ConsoleHTTPServer(ThreadingHTTPServer):
+    # Prevent wildcard/loopback listeners sharing a port on macOS.
+    allow_reuse_address = False
 
 
 if __name__ == '__main__':
@@ -726,19 +837,22 @@ if __name__ == '__main__':
     if not 0 <= args.port <= 65535:
         parser.error('port must be between 0 and 65535')
     try:
-        server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+        server = ConsoleHTTPServer(('0.0.0.0', args.port), Handler)
     except OSError as error:
         if error.errno != errno.EADDRINUSE or args.port == 0:
             raise
         # Do not terminate an unknown listener, including a server from a deleted checkout.
-        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        server = ConsoleHTTPServer(('0.0.0.0', 0), Handler)
         print(f'Порт {args.port} занят. Выбран свободный порт {server.server_port}.', file=sys.stderr, flush=True)
     url = f'http://127.0.0.1:{server.server_port}/#token={TOKEN}'
     instance_lock.seek(0)
     instance_lock.truncate()
-    json.dump({'url': url}, instance_lock)
+    network_urls = [f'http://{address}:{server.server_port}/#token={TOKEN}' for address in local_ipv4() if not address.startswith('127.')]
+    json.dump({'url': url, 'network_urls': network_urls}, instance_lock)
     instance_lock.flush()
     print(f'\nK3s Lab → {url}', flush=True)
+    for network_url in network_urls:
+        print('Доступ по сети:\n' + network_url, flush=True)
     print('Оставьте терминал открытым. Ctrl+C останавливает веб-сервер; дождитесь окончания операций перед выходом.', flush=True)
     import signal
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))

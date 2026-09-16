@@ -1,5 +1,5 @@
 """Read-only template storage selection and deployment checks."""
-from lab_apps import templates, validate, namespace, dns, claim_referenced
+from lab_apps import templates, validate, namespace, dns, claim_referenced, AUTH_TYPES
 
 
 def configs(data):
@@ -63,7 +63,7 @@ def prepare(apps,data):
 
 def preview(apps,data):
     plans=prepare(apps,data)
-    return dict(ok=True,apps=[dict(name=c['name'],namespace=c['namespace'],mode=c['storage_mode'],pvc=c['pvc'] or ('data-'+c['name']+'-0' if kind=='StatefulSet' else c['name']+'-data') if c['storage_mode']!='none' else '',secret=c['storage_secret'] or (c['name']+'-auth' if c['type'] in ('postgres','rabbitmq') else '')) for c,kind,objects,host in plans])
+    return dict(ok=True,apps=[dict(name=c['name'],namespace=c['namespace'],mode=c['storage_mode'],pvc=c['pvc'] or ('data-'+c['name']+'-0' if kind=='StatefulSet' else c['name']+'-data') if c['storage_mode']!='none' else '',secret=c['storage_secret'] or (c['name']+'-auth' if c['type'] in AUTH_TYPES else '')) for c,kind,objects,host in plans])
 
 
 def suggest_name(apps,data):

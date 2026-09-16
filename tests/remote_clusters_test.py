@@ -9,6 +9,19 @@ import server
 
 CONFIG={'apiVersion':'v1','kind':'Config','clusters':[{'name':'c','cluster':{'server':'https://cluster.example:6443'}}],'users':[{'name':'u','user':{'token':'test-token'}}],'contexts':[{'name':'ctx','context':{'cluster':'c','user':'u'}}],'current-context':'ctx'}
 class RemoteTests(unittest.TestCase):
+ def test_publication_address_validation_and_isolation(self):
+  with tempfile.TemporaryDirectory() as d:
+   first=Path(d)/'first';second=Path(d)/'second'
+   for root in (first,second):
+    root.mkdir();(root/'connection.json').write_text(json.dumps({'name':root.name,'context':'kept'}))
+   self.assertEqual(remote.publication_ip(first),'')
+   self.assertEqual(remote.publication_ip(first,'135.106.145.26'),'135.106.145.26')
+   self.assertEqual(remote.publication_ip(first),'135.106.145.26')
+   self.assertEqual(remote.publication_ip(second),'')
+   self.assertEqual(json.loads((first/'connection.json').read_text())['context'],'kept')
+   for invalid in ('999.1.1.1','example.org','http://1.2.3.4','1.2.3.4:80',''):
+    with self.assertRaises(ValueError):remote.publication_ip(first,invalid)
+   self.assertEqual(remote.publication_ip(first),'135.106.145.26')
  def test_safe_selection(self):
   c=copy.deepcopy(CONFIG);c['users'].append({'name':'other','user':{'token':'unrelated'}})
   result=remote.select(c,'ctx');self.assertEqual(len(result['users']),1);self.assertNotIn('unrelated',json.dumps(result))
@@ -41,11 +54,13 @@ class RemoteTests(unittest.TestCase):
    with patch.object(server,'ROOT',root):
     http=server.ThreadingHTTPServer(('127.0.0.1',0),server.Handler);thread=threading.Thread(target=http.serve_forever,daemon=True);thread.start()
     try:
-     cases=[('/api/action',dict(action='destroy',confirmed=True,confirmation='УДАЛИТЬ')),('/api/action',dict(action='app_deploy',confirmed=True)),('/api/yaml-apply',{}),('/api/yaml-preview',{}),('/api/kubectl',dict(command='delete nodes --all')),('/api/terminal',dict(operation='open')),('/api/terminal',dict(operation='open',pod='test',mode='shell')),('/api/templates',dict(operation='save'))]
+     cases=[('/api/action',dict(action='destroy',confirmed=True,confirmation='УДАЛИТЬ')),('/api/action',dict(action='stand_stop',confirmed=True)),('/api/yaml-apply',{}),('/api/yaml-preview',{}),('/api/kubectl',dict(command='delete nodes --all')),('/api/terminal',dict(operation='open')),('/api/terminal',dict(operation='open',pod='test',mode='shell'))]
      for path,data in cases:
       req=Request('http://127.0.0.1:'+str(http.server_port)+path,data=json.dumps(data).encode(),headers={'X-Lab-Token':server.TOKEN,'X-Lab-Cluster':'remote-test','Content-Type':'application/json'})
       with self.assertRaises(HTTPError) as error:urlopen(req)
-      self.assertEqual(error.exception.code,400);self.assertIn('режиме просмотра',json.loads(error.exception.read())['error'])
+      self.assertEqual(error.exception.code,400)
+      expected={'/api/yaml-apply':'Подтвердите применение','/api/yaml-preview':'YAML должен'}.get(path,'режиме просмотра')
+      self.assertIn(expected,json.loads(error.exception.read())['error'])
     finally:http.shutdown();http.server_close();thread.join()
  def test_remote_nodes_do_not_use_vm_tools(self):
   with tempfile.TemporaryDirectory() as d:
