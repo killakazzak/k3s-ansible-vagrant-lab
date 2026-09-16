@@ -4,7 +4,7 @@ import lab_apps as lab
 
 def load(apps,data):
  ns=lab.namespace(data.get('namespace'),True);name=lab.dns(data.get('name'));kind=data.get('kind')
- if kind not in ('Deployment','StatefulSet'):raise ValueError('Неподдерживаемый ресурс')
+ if kind not in ('Deployment','StatefulSet','DaemonSet'):raise ValueError('Неподдерживаемый ресурс')
  obj=apps.get(kind,ns,name)
  if obj['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')!=lab.MANAGER or obj['metadata'].get('labels',{}).get('lab.k3s/panel-for'):raise ValueError('Редактировать можно приложения, установленные через каталог')
  return ns,name,kind,obj
@@ -15,7 +15,8 @@ def settings(apps,data):
  route=apps.find('ingress',ns,name);service=apps.get('service',ns,name)
  editable_route=not route or route['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==lab.MANAGER
  classes=[x['metadata']['name'] for x in apps.get('ingressclasses')['items']]
- return dict(name=name,namespace=ns,kind=kind,resource_version=obj['metadata']['resourceVersion'],type=ctype,container=c['name'],image=c['image'],image_editable=len(containers)==1 and ctype not in ('argocd','gitlab-agent','gitlab-runner'),replicas=obj['spec'].get('replicas',1),replica_max=1 if kind=='StatefulSet' or any('persistentVolumeClaim' in v for v in spec.get('volumes',[])) or ctype in ('argocd','gitlab-agent','gitlab-runner') else 10,cpu=round(lab.resource_quantity(requests.get('cpu','100m'))*1000),memory=round(lab.resource_quantity(requests.get('memory','128Mi'))/1024**2),cpu_limit=round(lab.resource_quantity(limits.get('cpu','0'))*1000),memory_limit=round(lab.resource_quantity(limits.get('memory','0'))/1024**2),publication='ingress' if route else 'internal',host=(route or {}).get('spec',{}).get('rules',[{}])[0].get('host',''),ingress_class=(route or {}).get('spec',{}).get('ingressClassName',''),ingress_classes=classes,publication_editable=editable_route,service_ports=[p['port'] for p in service['spec']['ports']],service_port=next((p.get('backend',{}).get('service',{}).get('port',{}).get('number') for r in (route or {}).get('spec',{}).get('rules',[]) for p in r.get('http',{}).get('paths',[])),service['spec']['ports'][0]['port']))
+ import workload_types
+ return dict(can_change_kind=workload_types.eligible(obj),name=name,namespace=ns,kind=kind,resource_version=obj['metadata']['resourceVersion'],type=ctype,container=c['name'],image=c['image'],image_editable=len(containers)==1 and ctype not in ('argocd','gitlab-agent','gitlab-runner'),replicas=obj['spec'].get('replicas',1),replica_max=1 if kind=='StatefulSet' or any('persistentVolumeClaim' in v for v in spec.get('volumes',[])) or ctype in ('argocd','gitlab-agent','gitlab-runner') else 10,cpu=round(lab.resource_quantity(requests.get('cpu','100m'))*1000),memory=round(lab.resource_quantity(requests.get('memory','128Mi'))/1024**2),cpu_limit=round(lab.resource_quantity(limits.get('cpu','0'))*1000),memory_limit=round(lab.resource_quantity(limits.get('memory','0'))/1024**2),publication='ingress' if route else 'internal',host=(route or {}).get('spec',{}).get('rules',[{}])[0].get('host',''),ingress_class=(route or {}).get('spec',{}).get('ingressClassName',''),ingress_classes=classes,publication_editable=editable_route,service_ports=[p['port'] for p in service['spec']['ports']],service_port=next((p.get('backend',{}).get('service',{}).get('port',{}).get('number') for r in (route or {}).get('spec',{}).get('rules',[]) for p in r.get('http',{}).get('paths',[])),service['spec']['ports'][0]['port']))
 
 def prepare(apps,data):
  ns,name,kind,obj=load(apps,data);current=settings(apps,data)
@@ -31,6 +32,7 @@ def prepare(apps,data):
  if (cpu_limit and cpu_limit<cpu) or (memory_limit and memory_limit<memory):raise ValueError('Лимиты должны быть не меньше requests; 0 означает без лимита')
  resources=copy.deepcopy(obj['spec']['template']['spec']['containers'][0].get('resources',{}));resources.setdefault('requests',{}).update(cpu=str(cpu)+'m',memory=str(memory)+'Mi');resources.setdefault('limits',{}).update(cpu=str(cpu_limit)+'m' if cpu_limit else None,memory=str(memory_limit)+'Mi' if memory_limit else None)
  patch={'metadata':{'resourceVersion':data['resource_version']},'spec':{'replicas':replicas,'template':{'spec':{'containers':[{'name':current['container'],'image':image,'resources':resources}]}}}}
+ if kind=='DaemonSet':patch['spec'].pop('replicas',None)
  route=apps.find('ingress',ns,name);publication=data.get('publication');desired=None
  if publication not in ('internal','ingress'):raise ValueError('Выберите способ публикации')
  if route and any(p.get('backend',{}).get('service',{}).get('name')!=name for rule in route.get('spec',{}).get('rules',[]) for p in rule.get('http',{}).get('paths',[])):raise ValueError('Ingress содержит маршруты другого приложения; используйте редактор YAML')

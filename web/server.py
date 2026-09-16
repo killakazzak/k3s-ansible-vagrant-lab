@@ -217,7 +217,7 @@ TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.Lock()
 JOB = None
 INSTALL_QUEUE = InstallQueue()
-LAB_ACTIONS = {'remote_traefik_publish','remote_rancher_install','remote_ingress_update','remote_ingress_delete','app_edit','remote_ingress_install','metrics_install','rancher_install','rabbit_plugins','app_start','app_stop','app_restart','app_delete','app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
+LAB_ACTIONS = {'app_change_kind','remote_traefik_publish','remote_rancher_install','remote_ingress_update','remote_ingress_delete','app_edit','remote_ingress_install','metrics_install','rancher_install','rabbit_plugins','app_start','app_stop','app_restart','app_delete','app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
 ACTIONS = LAB_ACTIONS | {'create', 'destroy', 'verify', 'add_master', 'add_worker', 'remove_master', 'remove_worker', 'resources', 'version'}
 DESTRUCTIVE = {'app_delete','destroy', 'remove_master', 'remove_worker', 'version'}
 

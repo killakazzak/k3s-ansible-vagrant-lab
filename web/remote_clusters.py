@@ -73,7 +73,7 @@ def disconnect(repo, root):
     return {'ok':True}
 
 def permit(path,data):
-    if path=='/api/action' and data.get('action') in ('remote_traefik_publish','remote_rancher_install','remote_ingress_update','remote_ingress_delete','remote_ingress_install','app_deploy','template_deploy','app_edit','app_delete'):return
+    if path=='/api/action' and data.get('action') in ('app_change_kind','remote_traefik_publish','remote_rancher_install','remote_ingress_update','remote_ingress_delete','remote_ingress_install','app_deploy','template_deploy','app_edit','app_delete'):return
     if path in ('/api/templates','/api/gitlab-secret','/api/app-access','/api/app-settings'):return
     if path in ('/api/connections','/api/clusters','/api/pod','/api/pods','/api/resource-yaml','/api/yaml-preview','/api/yaml-apply','/api/resource-delete','/api/shutdown'):return
     if path=='/api/terminal':

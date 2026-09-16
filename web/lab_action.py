@@ -5,7 +5,10 @@ from lab_apps import Apps, validate, namespace, templates
 
 def main():
     root=Path(sys.argv[1]);data=json.load(sys.stdin) if len(sys.argv)<3 else {'action':sys.argv[2],'params':{}};action=data['action'];params=data.get('params',{});apps=Apps(root)
-    if action=='app_edit':
+    if action=='app_change_kind':
+        import workload_types
+        workload_types.migrate(apps,params)
+    elif action=='app_edit':
         import app_editor
         app_editor.edit(apps,params)
     elif action in ('remote_ingress_update','remote_ingress_delete'):
