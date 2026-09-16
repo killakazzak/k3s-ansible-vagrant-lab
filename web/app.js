@@ -80,7 +80,7 @@ function render() {
   $('node-count').textContent=ready+' / '+state.nodes.length;
   $('roles').textContent=state.nodes.filter(n=>n.role==='server').length+' master · '+state.nodes.filter(n=>n.role==='workers').length+' workers';
   $('memory').textContent=(state.nodes.reduce((s,n)=>s+n.ram,0)/1024).toFixed(0)+' ГБ';
-  $('version').textContent=state.version; $('provider').textContent=state.external?'Удалённый кластер · только просмотр':state.provider+' · ARM64';
+  renderClusterVersion(state); $('provider').textContent=state.external?'Удалённый кластер':state.provider;
   $('node-list').replaceChildren();
   if(!state.nodes.length){const row=element('tr'),cell=element('td','Кластер пуст. Нажмите «Новый кластер».');cell.colSpan=6;row.append(cell);$('node-list').append(row)}
   for (const node of state.nodes) {
@@ -334,4 +334,14 @@ function renderInstallQueue(items){
  const box=$('install-queue');box.hidden=!items.length;box.replaceChildren();if(!items.length)return;
  box.append(element('strong','Очередь установок · '+items.length));
  for(const [i,item] of items.entries()){const row=element('div',undefined,'install-queue-row');row.append(element('span',(i+1)+'. '+item.title+' · '+item.cluster));const cancel=element('button','Убрать','button secondary');cancel.onclick=async()=>{cancel.disabled=true;try{await api('action',{action:'cancel_install',params:{id:item.id},confirmed:true});await poll()}catch(e){error(e.message);cancel.disabled=false}};row.append(cancel);box.append(row)}
+}
+
+function renderClusterVersion(cluster){
+ const versions=cluster.reachable?[...new Set(cluster.nodes.map(n=>n.actual_version).filter(Boolean))].sort():[];
+ $('version-label').textContent=versions.length&&versions.every(v=>v.includes('+k3s'))?'Текущая версия k3s':cluster.external?'Текущая версия Kubernetes':'Текущая версия k3s';
+ $('version').textContent=versions.length?versions.join(' / '):'Не определена';
+ $('version').title=versions.length?cluster.nodes.map(n=>n.name+': '+(n.actual_version||'не определена')).join('\n'):'';
+ const incomplete=cluster.nodes.some(n=>!n.actual_version);
+ $('version-detail').textContent=versions.length?(versions.length>1?'На узлах разные версии':incomplete?'Версия получена не для всех узлов':'По данным работающих узлов'):(cluster.exists===false?'Кластер ещё не создан':cluster.paused?'Кластер остановлен':'Нет данных от API');
+ if(!versions.length&&!cluster.external&&cluster.version)$('version-detail').textContent+=' · В конфигурации: '+cluster.version;
 }
