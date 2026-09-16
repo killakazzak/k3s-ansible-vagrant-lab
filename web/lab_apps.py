@@ -76,10 +76,16 @@ def validate(config):
     shovel=config.get('shovel',False)
     if shovel not in (True,False,'true','false'):raise ValueError('Некорректная настройка Shovel')
     integration=gitlab_apps.settings(config,dns,number) if kind in gitlab_apps.TYPES else {}
-    return dict(workload_type=workload_type,publication=publication,storage_class=resource_class(config['storage_class']) if config.get('storage_class') else '',ingress_class=resource_class(config['ingress_class']) if config.get('ingress_class') else '',**integration,shovel=shovel in (True,'true'),storage_mode=mode,pvc=claim,mount_path=mount,storage_secret=credential,type=kind,name=dns(config.get('name',''),'имя приложения'),namespace=namespace(config.get('namespace','dev'),True),image=image,
+    result=dict(workload_type=workload_type,publication=publication,storage_class=resource_class(config['storage_class']) if config.get('storage_class') else '',ingress_class=resource_class(config['ingress_class']) if config.get('ingress_class') else '',**integration,shovel=shovel in (True,'true'),storage_mode=mode,pvc=claim,mount_path=mount,storage_secret=credential,type=kind,name=dns(config.get('name',''),'имя приложения'),namespace=namespace(config.get('namespace','dev'),True),image=image,
                 replicas=number(config.get('replicas',1),1,1 if kind in STATEFUL or kind in ('argocd',)+gitlab_apps.TYPES else 10,'реплики'),
                 cpu=number(config.get('cpu',CATALOG[kind].get('cpu',100)),25,8000,'CPU, millicores'),memory=number(config.get('memory',CATALOG[kind].get('memory',1024 if kind=='kafka' else 512 if kind=='rabbitmq' else 256)),CATALOG[kind].get('memory',768 if kind=='kafka' else 256 if kind=='rabbitmq' else 32),16384,'RAM, MiB'),
                 storage=number(config.get('storage',CATALOG[kind].get('storage',2)),1,100,'диск, GiB'),port=number(config.get('port',CATALOG[kind]['port']),1,65535,'порт'),host=host)
+
+    for key,maximum in [('cpu',32000),('memory',65536)]:
+        value=number(config.get(key+'_limit',result[key]*2),0,maximum,'Лимит '+key)
+        if value and value<result[key]:raise ValueError('Лимит '+key+' должен быть не меньше запроса; 0 — без лимита')
+        result[key+'_limit']=value
+    return result
 
 def claim_referenced(name,objects):
     for obj in objects:
@@ -235,6 +241,8 @@ class Apps:
             if ctype in ('nginx','custom'):
                 import workload_types
                 if workload_types.eligible(obj):config['workload_type']=kind
+            limits=c.get('resources',{}).get('limits',{})
+            config.update(cpu_limit=amount(limits.get('cpu','0'),.001),memory_limit=amount(limits.get('memory','0'),1024**2))
             claims=obj['spec'].get('volumeClaimTemplates',[])
             if claims:
                 size=claims[0]['spec']['resources']['requests']['storage']
@@ -547,6 +555,12 @@ class Apps:
         return config['host']+('.app.' if config['host'][-1].isdigit() else '.')+ip+'.sslip.io'
     def plan(self,config):
         plan=self._plan(config)
+        c,kind,objects,_=plan
+        primary=next(o for o in objects if o['kind']==kind and o['metadata']['name']==c['name'])
+        limits=primary['spec']['template']['spec']['containers'][0].setdefault('resources',{}).setdefault('limits',{})
+        for key,suffix in [('cpu','m'),('memory','Mi')]:
+            if c[key+'_limit']:limits[key]=str(c[key+'_limit'])+suffix
+            else:limits.pop(key,None)
         if plan[0].get('workload_type','auto')!='auto':
             import workload_types
             c,kind,objects,host=plan;target=c['workload_type']
