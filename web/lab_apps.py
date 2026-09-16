@@ -768,6 +768,18 @@ class Apps:
         except Exception:
             self.record_check(obj,'failed');raise
         else:self.record_check(obj,'success')
+    def check_public_url(self,host):
+        url='http://'+host+'/'
+        print('Проверка URL с компьютера платформы: '+url,flush=True)
+        try:
+            subprocess.run(['curl','--noproxy','*','--fail','--silent','--show-error','--max-time','10','--retry','5','--retry-delay','2','--retry-all-errors','--output',os.devnull,url],check=True,timeout=90)
+        except subprocess.CalledProcessError as error:
+            reason={6:'Компьютер платформы не смог разрешить домен '+host+'. Проверьте DNS и VPN на этом компьютере и повторите проверку.',7:'Не удалось подключиться к адресу публикации. Проверьте адрес и порт Ingress, маршрутизацию и firewall.',22:'Адрес публикации вернул HTTP-ошибку. Проверьте правила Ingress и ответ приложения.',28:'Истекло время ожидания адреса публикации. Проверьте доступность Ingress.'}.get(error.returncode,'Проверка адреса публикации завершилась с кодом '+str(error.returncode)+'.')
+            raise ValueError('Готовность приложения и внутренняя проверка пройдены. '+reason+' Приложение сохранено; переустановка не требуется.') from None
+        except subprocess.TimeoutExpired:
+            raise ValueError('Готовность приложения и внутренняя проверка пройдены, но проверка URL превысила время ожидания. Проверьте DNS и доступность Ingress с компьютера платформы.') from None
+        print('URL '+url+': OK',flush=True)
+
     def _check(self,c,kind,host=''):
         ns=c['namespace'];name=c['name'];target=kind.lower()+'/'+name
         print('TASK [Проверки: готовность, DNS, сеть и приложение]',flush=True)
@@ -816,8 +828,7 @@ class Apps:
             self.kubectl(['exec','-n',ns,target,'--','rabbitmq-diagnostics','-q','check_running'],timeout=60)
             print('RabbitMQ check_running: OK',flush=True)
         if host and not (self.root/'connection.json').is_file():
-            subprocess.run(['curl','--noproxy','*','--fail','--silent','--show-error','--max-time','10','--retry','5','--retry-delay','2','--retry-all-errors','--output',os.devnull,'http://'+host+'/'],check=True,timeout=90)
-            print('URL http://'+host+'/: OK',flush=True)
+            self.check_public_url(host)
         print('DNS и соединение с Service: OK',flush=True)
     def change(self,data,action):
         ns=namespace(data.get('namespace'),True);name=dns(data.get('name'));kind=data.get('kind')

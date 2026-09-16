@@ -217,7 +217,7 @@ TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.Lock()
 JOB = None
 INSTALL_QUEUE = InstallQueue()
-LAB_ACTIONS = {'app_change_kind','remote_traefik_publish','remote_rancher_install','remote_ingress_update','remote_ingress_delete','app_edit','remote_ingress_install','metrics_install','rancher_install','rabbit_plugins','app_start','app_stop','app_restart','app_delete','app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
+LAB_ACTIONS = {'k3s_upgrade','app_change_kind','remote_traefik_publish','remote_rancher_install','remote_ingress_update','remote_ingress_delete','app_edit','remote_ingress_install','metrics_install','rancher_install','rabbit_plugins','app_start','app_stop','app_restart','app_delete','app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
 ACTIONS = LAB_ACTIONS | {'create', 'destroy', 'verify', 'add_master', 'add_worker', 'remove_master', 'remove_worker', 'resources', 'version'}
 DESTRUCTIVE = {'app_delete','destroy', 'remove_master', 'remove_worker', 'version'}
 
@@ -524,6 +524,12 @@ class Handler(BaseHTTPRequestHandler):
                 name = self.headers.get('X-Lab-Cluster', 'default')
                 filename = ('k8s-cluster1' if name == 'default' else name) + '-kubeconfig.yaml'
                 return self.reply(200, content, 'application/yaml', download=filename)
+            if path == '/api/k3s-versions':
+                import k3s_updates
+                return self.reply(200,k3s_updates.stable_releases())
+            if path == '/api/k3s-update':
+                import k3s_updates
+                return self.reply(200,k3s_updates.preview(lab_apps.Apps(active_root(),cluster_env(active_root()))))
             if path == '/api/clusters':
                 return self.reply(200, visible_clusters())
             if path in ('/api/credentials/rancher', '/api/credentials/traefik'):

@@ -574,3 +574,44 @@ function changeAppWorkload(app,current){
  type.onchange=()=>{replicas.parentElement.hidden=type.value==='DaemonSet';if(type.value==='DaemonSet')replicas.value=1};
  labField('confirmation','Введите имя приложения для подтверждения','','text');$('lab-submit').textContent='Изменить тип нагрузки';
 }
+
+$('k3s-update-open').onclick=async()=>{
+ const cluster=selectedCluster;
+ labOpen('Обновление k3s','Проверяем патчи текущей ветки и следующую minor-версию. Узлы обновляются последовательно без пересоздания VM.',null);
+ const result=element('div','Проверяем обновления…','lab-note');result.setAttribute('role','status');$('lab-extra').append(result);
+ try{
+  const plan=await api('k3s-update');if(cluster!==selectedCluster||!result.isConnected)return;
+  result.replaceChildren(element('h3',plan.mixed?'Завершение начатого обновления':'Текущая ветка k3s · '+plan.current_branch));
+  for(const n of plan.nodes)result.append(element('p',n.name+' · '+n.version+' · Ready'));
+  for(const warning of plan.warnings||[])result.append(element('p',warning));
+  const label=element('label','Версия для обновления');const select=element('select');select.id='k3s-upgrade-version';label.htmlFor=select.id;
+  const choices=plan.choices||[{version:plan.target,available:plan.available,minor_upgrade:false}];
+  for(const c of choices){const option=element('option',c.version+' · '+(c.minor_upgrade?'следующая minor-версия':c.available?'патч текущей ветки':'последний патч текущей ветки'));option.value=c.version;select.append(option)}
+  const recommended=choices.find(c=>c.available);select.value=(recommended||choices[0]).version;result.append(label,select);
+  const description=element('p','Сначала server, затем worker, по одному. Сохраняются VM, приложения и PVC. Перед обновлением создаётся snapshot etcd; данные PVC в него не входят. Возможен краткий перерыв доступа к API.');result.append(description);
+  const notes=element('a','Изменения выбранного релиза ↗');notes.target='_blank';notes.rel='noopener noreferrer';result.append(notes);
+  const agreement=element('label');const check=element('input');check.type='checkbox';check.id='k3s-minor-confirm';agreement.append(check,document.createTextNode(' Я проверил совместимость приложений, CRD и Rancher с новой версией Kubernetes. Автоматическая проверка покрывает версии и готовность узлов, но не совместимость приложений.'));result.append(agreement);
+  const status=element('p');result.append(status);let sending=false;
+  const install=element('button','','button primary');install.type='button';result.append(install);
+  const update=()=>{const c=choices.find(c=>c.version===select.value);agreement.hidden=!c.minor_upgrade;notes.href='https://github.com/k3s-io/k3s/releases/tag/'+encodeURIComponent(c.version);install.textContent='Установить '+c.version;install.hidden=!c.available;install.disabled=sending||(c.minor_upgrade&&!check.checked);status.textContent=!c.available?'Установлен последний патч ветки '+plan.current_branch:c.minor_upgrade?'Переход на следующую minor-версию. Пропуск веток и понижение запрещены.':'Обновление в пределах текущей ветки.'};
+  select.onchange=()=>{check.checked=false;update()};check.onchange=update;
+  install.onclick=async()=>{const c=choices.find(c=>c.version===select.value);if(sending||!c.available||(c.minor_upgrade&&!check.checked))return;sending=true;select.disabled=true;update();try{if(cluster!==selectedCluster)throw Error('Выбран другой кластер');await labAction('k3s_upgrade',{target:c.version,fingerprint:plan.fingerprint,minor_confirmed:c.minor_upgrade&&check.checked})}catch(e){sending=false;select.disabled=false;update();result.append(element('p',e.message,'error'))}};update();
+ }catch(e){if(result.isConnected)result.textContent='Не удалось проверить обновления: '+e.message}
+};
+
+$('apps-delete-all').onclick=async()=>{
+ const cluster=selectedCluster;
+ labOpen('Удалить все приложения?','Кластер: '+cluster+'. Будут удалены все приложения каталога, их сервисы, Ingress и веб-панели. PVC, пароли, namespace и ingress-контроллеры сохранятся.',null);
+ const list=element('div','Получаем список приложений…','lab-note');list.setAttribute('role','status');$('lab-extra').append(list);
+ try{
+  const apps=(await api('apps')).filter(a=>a.managed&&!a.ingress_controller);
+  if(cluster!==selectedCluster||!list.isConnected)return;
+  list.replaceChildren(element('p','Приложений к удалению: '+apps.length));
+  for(const a of apps)list.append(element('p',a.namespace+'/'+a.name+' · '+a.kind));
+  if(!apps.length){list.append(element('p','Нет приложений каталога для удаления.'));return}
+  if(apps.length>500)throw Error('За одну операцию можно удалить до 500 приложений. Используйте удаление выделенных.');
+  labField('confirmation','Введите УДАЛИТЬ','');
+  labSubmit=async data=>{sameCluster();if(data.confirmation!=='УДАЛИТЬ')throw Error('Для подтверждения введите УДАЛИТЬ');await api('action',{action:'app_delete',confirmed:true,confirmation:data.confirmation,params:{catalog_only:true,apps:apps.map(a=>({kind:a.kind,name:a.name,namespace:a.namespace}))}});selectedApps.clear();$('lab-dialog').close();updateBulk();await poll();await refreshApps()};
+  $('lab-submit').textContent='Удалить приложения · '+apps.length;$('lab-submit').hidden=false;
+ }catch(e){if(list.isConnected)list.append(element('p',e.message,'error'))}
+};
