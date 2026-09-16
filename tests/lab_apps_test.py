@@ -6,6 +6,35 @@ import lab_apps as lab
 class LabTests(unittest.TestCase):
  def setUp(self):
   host=patch.object(lab.Apps,'host',side_effect=lambda c: c['host']+'.example.test' if c['host'] else '');host.start();self.addCleanup(host.stop)
+ def test_creation_limits_validation(self):
+  config=dict(name='web',cpu=100,memory=256)
+  self.assertEqual(lab.validate(config)['memory_limit'],512)
+  for limits in [dict(cpu_limit=500,memory_limit=768),dict(cpu_limit=0,memory_limit=0)]:
+   normalized=lab.validate(dict(config,**limits))
+   self.assertEqual(lab.validate(normalized),normalized)
+   for key,value in limits.items():self.assertEqual(normalized[key],value)
+  for limits in [dict(cpu_limit=99),dict(memory_limit=255),dict(cpu_limit=-1)]:
+   with self.assertRaises(ValueError):lab.validate(dict(config,**limits))
+ def test_creation_limits_in_local_and_remote_plans(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp)
+   for remote in (False,True):
+    if remote:(root/'connection.json').write_text('{}')
+    app=lab.Apps(root)
+    for kind in ('nginx','postgres','elk'):
+     for cpu,memory in [(1000,8192),(0,0)]:
+      c,k,objects,h=app.plan(dict(type=kind,name='demo',cpu_limit=cpu,memory_limit=memory))
+      obj=next(o for o in objects if o['kind']==k and o['metadata']['name']=='demo')
+      limits=obj['spec']['template']['spec']['containers'][0]['resources']['limits']
+      self.assertEqual(limits,{'cpu':'1000m','memory':'8192Mi'} if cpu else {})
+ def test_capture_template_preserves_explicit_limits(self):
+  app=lab.Apps('/tmp');c,k,objects,h=app.plan(dict(name='web',cpu_limit=750,memory_limit=0))
+  obj=next(o for o in objects if o['kind']==k)
+  with patch.object(app,'get',side_effect=[obj,{'items':[]}]),patch.object(lab,'save_template') as save:
+   app.template_from_apps(dict(name='stand',selected=[dict(kind=k,name='web',namespace='dev')]))
+   config=save.call_args.args[0]['apps'][0]
+   self.assertEqual(config['cpu_limit'],750);self.assertEqual(config['memory_limit'],0)
+
  def test_rollout_explains_scheduler_failure(self):
   app=lab.Apps('/tmp')
   pod={'status':{'conditions':[{'type':'PodScheduled','status':'False','message':'0/2 nodes: 1 Insufficient memory, 1 untolerated taint'}]}}
