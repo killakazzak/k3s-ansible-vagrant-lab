@@ -6,6 +6,18 @@ import lab_apps as lab
 class LabTests(unittest.TestCase):
  def setUp(self):
   host=patch.object(lab.Apps,'host',side_effect=lambda c: c['host']+'.example.test' if c['host'] else '');host.start();self.addCleanup(host.stop)
+ def test_publication_check_distinguishes_dns_and_http_failures(self):
+  import subprocess
+  app=lab.Apps('/tmp')
+  for code,message in [(6,'не смог разрешить домен'),(7,'Не удалось подключиться'),(22,'HTTP-ошибку'),(28,'Истекло время')]:
+   with self.subTest(code=code),patch.object(lab.subprocess,'run',side_effect=subprocess.CalledProcessError(code,['curl'])):
+    with self.assertRaisesRegex(ValueError,message):app.check_public_url('web.example.test')
+  with patch.object(lab.subprocess,'run',side_effect=subprocess.TimeoutExpired(['curl'],90)):
+   with self.assertRaisesRegex(ValueError,'превысила время'):app.check_public_url('web.example.test')
+  with patch.object(lab.subprocess,'run') as run:
+   app.check_public_url('web.example.test')
+   self.assertEqual(run.call_args.args[0][-1],'http://web.example.test/')
+
  def test_creation_limits_validation(self):
   config=dict(name='web',cpu=100,memory=256)
   self.assertEqual(lab.validate(config)['memory_limit'],512)

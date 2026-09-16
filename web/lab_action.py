@@ -5,7 +5,10 @@ from lab_apps import Apps, validate, namespace, templates
 
 def main():
     root=Path(sys.argv[1]);data=json.load(sys.stdin) if len(sys.argv)<3 else {'action':sys.argv[2],'params':{}};action=data['action'];params=data.get('params',{});apps=Apps(root)
-    if action=='app_change_kind':
+    if action=='k3s_upgrade':
+        import k3s_updates
+        k3s_updates.upgrade(apps,params)
+    elif action=='app_change_kind':
         import workload_types
         workload_types.migrate(apps,params)
     elif action=='app_edit':
@@ -89,11 +92,11 @@ def main():
     elif action in ('app_start','app_stop','app_restart'):
         from lab_apps import dns, MANAGER
         targets=params.get('apps',[])
-        if not isinstance(targets,list) or not 1<=len(targets)<=50:raise ValueError('Выберите от 1 до 50 приложений')
+        if not isinstance(targets,list) or not 1<=len(targets)<=500:raise ValueError('Выберите от 1 до 500 приложений')
         workloads={};argo_targets=[]
         for target in targets:
             kind=target.get('kind');ns=namespace(target.get('namespace'),True);name=dns(target.get('name'))
-            if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный тип приложения')
+            if kind not in ('Deployment','StatefulSet','DaemonSet'):raise ValueError('Неизвестный тип приложения')
             obj=apps.get(kind,ns,name)
             if obj['metadata'].get('labels',{}).get('lab.k3s/type')=='argocd' and obj['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER:
                 if (ns,name) not in argo_targets:argo_targets.append((ns,name))
@@ -128,14 +131,14 @@ def main():
         targets=params.get('apps')
         if targets is None:apps.delete(params)
         else:
-            if not isinstance(targets,list) or not 1<=len(targets)<=50:raise ValueError('Выберите от 1 до 50 приложений')
+            if not isinstance(targets,list) or not 1<=len(targets)<=500:raise ValueError('Выберите от 1 до 500 приложений')
             checked=[]
             for target in targets:
                 kind=target.get('kind');ns=namespace(target.get('namespace'),True);name=target.get('name')
-                if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный тип приложения')
+                if kind not in ('Deployment','StatefulSet','DaemonSet'):raise ValueError('Неизвестный тип приложения')
                 from lab_apps import dns
                 name=dns(name);obj=apps.get(kind,ns,name)
-                if (root/'connection.json').is_file():
+                if (root/'connection.json').is_file() or params.get('catalog_only'):
                     from lab_apps import MANAGER
                     labels=obj['metadata'].get('labels',{})
                     if labels.get('app.kubernetes.io/managed-by')!=MANAGER or labels.get('lab.k3s/panel-for'):raise ValueError('Удалять можно только приложения каталога')
