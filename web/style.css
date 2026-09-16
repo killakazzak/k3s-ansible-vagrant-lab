@@ -191,3 +191,12 @@
 .app-picker-option{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:9px;background:white;color:var(--ink);cursor:pointer;flex-shrink:0}
 .app-picker-option:hover,.app-picker-option:focus-visible{background:#f0f6f2;outline:none}.app-picker-option[aria-selected=true]{background:#e8f3ed}.app-picker-option-text{display:flex;flex-direction:column;gap:3px;min-width:0}.app-picker-option strong{font-size:13px;font-weight:600}.app-picker-option small{font-size:10px;color:#7c8e83}.app-picker-check{margin-left:auto;color:#2c795a}.app-picker-empty{font-size:12px;color:#7c8e83;padding:12px}
 @media(max-width:600px){.app-picker-popup{min-width:0}.app-picker-list{max-height:240px}}
+
+/* Installed application identity: reuse the local catalog logos. */
+.installed-app-identity{display:flex;align-items:center;gap:12px;margin:14px 0 10px;min-width:0}
+.installed-app-identity>.app-brand-icon{width:44px;height:44px;flex:0 0 44px;border-radius:12px;background:#fff;border:1px solid var(--line);display:grid;place-items:center}
+.installed-app-identity>.app-brand-icon svg{width:27px;height:27px}
+.installed-app-heading{min-width:0}
+.installed-app-heading h3{margin:0 0 3px;overflow-wrap:anywhere;line-height:1.25}
+.installed-app-brand{display:block;font-size:11px;color:var(--muted);line-height:1.4}
+.app-card>code{display:block;overflow-wrap:anywhere;white-space:pre-wrap}
