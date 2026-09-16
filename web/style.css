@@ -157,3 +157,37 @@
 
 .remote-upload input[type=file]{height:auto;min-height:46px;padding:8px;width:100%}
 .remote-upload input::file-selector-button{border:0;border-radius:7px;background:#eaf3ef;color:#236b57;padding:7px 12px;margin-right:10px;font:inherit;cursor:pointer}
+
+.operation-log-actions{display:flex;align-items:center;justify-content:flex-end;gap:14px;flex-wrap:wrap}.terminalhead .operation-log-actions .button{padding:7px 12px;font-size:12px;color:#d9eee4;background:#23433f;border:1px solid #49645d;white-space:nowrap}.terminalhead .operation-log-actions .button:hover{background:#31574c}
+
+/* GitLab connection settings: compact fields and a separate credential action. */
+.gitlab-connection{grid-column:1/-1;min-width:0;padding:18px;border:1px solid #dce7e1;border-radius:14px;background:#f6f9f7;margin-top:6px}
+.gitlab-connection[hidden]{display:none}
+.gitlab-connection-heading{display:flex;align-items:center;gap:10px;margin-bottom:16px;font-size:14px}
+.gitlab-connection-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:#e3eee8;color:#236b55;font-size:11px;font-weight:700}
+.gitlab-connection-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px 16px;align-items:start}
+.gitlab-connection-fields>div[hidden]{display:none}
+.gitlab-connection label{font-size:12px!important;line-height:1.4;margin:0 0 6px!important;color:#51665d}
+.gitlab-connection input{box-sizing:border-box;width:100%;min-width:0;height:42px!important;margin:0!important;padding:9px 12px!important;font-size:13px!important;border-radius:9px!important;background:#fff}
+.gitlab-token-area{display:flex;align-items:flex-end;gap:10px;margin-top:16px;padding-top:16px;border-top:1px solid #dde7e1}
+.gitlab-token-area>div{flex:1;min-width:0}
+.gitlab-token-area .button{flex:0 0 auto;align-self:flex-end;height:42px;min-height:0;margin:0;padding:0 16px;font-size:12px;white-space:nowrap;border-radius:9px}
+.gitlab-connection-note{margin:10px 0 0!important;font-size:11px!important;line-height:1.55;color:#75867d}
+.gitlab-connection-note.is-saved{color:#236b55}
+.gitlab-connection-help{margin-top:12px;font-size:12px;color:#51665d}
+.gitlab-connection-help summary{cursor:pointer;width:fit-content;font-weight:600;padding:3px 0}
+.gitlab-connection-help p{margin:8px 0 0;font-size:12px;line-height:1.6;max-width:65ch}
+@media(max-width:600px){.gitlab-connection{padding:14px}.gitlab-connection-fields{grid-template-columns:1fr}.gitlab-token-area{flex-direction:column;align-items:stretch}.gitlab-token-area .button{align-self:flex-start}.gitlab-token-area>div{width:100%}}
+
+.install-queue{padding:14px 24px;border-bottom:1px solid #385052;color:#cde4d8;font-size:12px}.install-queue[hidden]{display:none}.install-queue-row{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-top:8px}.install-queue-row span{overflow-wrap:anywhere}.install-queue-row .button{padding:5px 10px;font-size:11px}
+
+.app-picker{position:relative;min-width:0}.app-picker .app-picker-native{display:none!important}
+.app-picker-trigger{width:100%;display:flex;align-items:center;gap:11px;text-align:left;background:#fff;border:1px solid #d6e2dc;border-radius:11px;padding:11px 14px;min-height:48px;color:var(--ink);cursor:pointer;font-size:14px;font-weight:600}
+.app-picker-trigger:focus-visible{outline:2px solid #5a9e80;outline-offset:2px}.app-picker-chevron{margin-left:auto;color:#70877b;font-size:19px}
+.app-brand-icon{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;flex:0 0 30px;background:#f4f7f5;border-radius:8px;font-size:21px;font-weight:800}.app-brand-icon svg{width:21px;height:21px}
+.app-picker-popup{position:absolute;z-index:100;top:calc(100% + 7px);left:0;right:0;min-width:240px;padding:8px;border:1px solid #dce6df;border-radius:14px;background:white;box-shadow:0 14px 40px #18362b26}.app-picker-popup[hidden]{display:none}.app-picker-popup.opens-up{top:auto;bottom:calc(100% + 7px)}
+.app-picker-popup input[type=search]{width:100%;height:37px;margin:0 0 7px;padding:8px 11px;font-size:12px;border:1px solid #e0e8e3;border-radius:8px;background:#f6f9f7}
+.app-picker-list{max-height:280px;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:3px}
+.app-picker-option{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:9px;background:white;color:var(--ink);cursor:pointer;flex-shrink:0}
+.app-picker-option:hover,.app-picker-option:focus-visible{background:#f0f6f2;outline:none}.app-picker-option[aria-selected=true]{background:#e8f3ed}.app-picker-option-text{display:flex;flex-direction:column;gap:3px;min-width:0}.app-picker-option strong{font-size:13px;font-weight:600}.app-picker-option small{font-size:10px;color:#7c8e83}.app-picker-check{margin-left:auto;color:#2c795a}.app-picker-empty{font-size:12px;color:#7c8e83;padding:12px}
+@media(max-width:600px){.app-picker-popup{min-width:0}.app-picker-list{max-height:240px}}

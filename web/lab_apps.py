@@ -1,11 +1,17 @@
 """Application catalogue, repeatable templates and scoped Kubernetes diagnostics."""
 import json, os, re, secrets, subprocess, tempfile, time, base64
 import app_panels
+import catalog_services
+import elk_stack
+import argocd_bundle
+import gitlab_apps
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANAGER = 'k3s-lab-catalog'
 CATALOG = {'nginx': {'image':'nginx:1.30.4-alpine','port':80}, 'postgres':{'image':'postgres:18.6-alpine','port':5432}, 'redis':{'image':'redis:8.10.1-alpine','port':6379}, 'kafka':{'image':'apache/kafka:4.3.1','port':9092}, 'rabbitmq':{'image':'rabbitmq:4.3.5-management','port':5672}, 'custom':{'image':'','port':8080}}
-STATEFUL = ('postgres','redis','kafka','rabbitmq')
+CATALOG.update(catalog_services.CATALOG)
+STATEFUL = ('postgres','redis','kafka','rabbitmq') + tuple(k for k in catalog_services.CATALOG if k not in ('argocd',)+gitlab_apps.TYPES)
+AUTH_TYPES = ('postgres','rabbitmq') + catalog_services.AUTH_TYPES
 PROTECTED = {'kube-system','kube-public','kube-node-lease','cattle-system','cert-manager','default'}
 
 def dns(value, label='имя'):
@@ -32,6 +38,14 @@ def validate(config):
     image=config.get('image',CATALOG[kind]['image'])
     if not isinstance(image,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/:@-]{0,250}',image):raise ValueError('Укажите корректный образ с тегом или digest')
     if ':' not in image.rsplit('/',1)[-1] or image.endswith(':latest'):raise ValueError('Укажите версию образа вместо latest')
+    if kind in catalog_services.CATALOG:
+        expected=CATALOG[kind]['image'].rsplit(':',1)[0]
+        if kind not in gitlab_apps.TYPES and not re.fullmatch(re.escape(expected+(':'+'v' if kind in ('prometheus','argocd') else ':alpine-' if kind=='zabbix' else ':'))+r'[0-9]+\.[0-9]+\.[0-9]+',image):raise ValueError('Укажите стабильную версию официального образа '+expected)
+        if int(config.get('port',CATALOG[kind]['port']))!=CATALOG[kind]['port']:raise ValueError('Для этого приложения используется стандартный порт')
+    if kind in gitlab_apps.TYPES and not re.fullmatch(re.escape(CATALOG[kind]['image'].rsplit(':',1)[0])+(':'+r'alpine-v' if kind=='gitlab-runner' else ':v')+r'[0-9]+\.[0-9]+\.[0-9]+',image):raise ValueError('Укажите официальную стабильную версию GitLab Runner/Agent, совместимую с вашим GitLab')
+    if kind=='argocd' and image!=argocd_bundle.IMAGE:raise ValueError('Argo CD обновляется полным набором манифестов, а не отдельным образом')
+    if kind=='argocd' and not re.fullmatch(r'argocd(?:-[a-z0-9-]+)?',config.get('namespace','')):raise ValueError('Argo CD: выберите отдельный namespace argocd или argocd-<имя>')
+    if kind=='elk' and not re.fullmatch(r'docker.elastic.co/elasticsearch/elasticsearch:9\.5\.\d+',image):raise ValueError('ELK: используйте совместимые версии 9.5.x всех компонентов')
     if kind=='postgres' and not re.fullmatch(r'(?:docker.io/library/)?postgres:(?:17|18)(?:[.\w-]*)',image):raise ValueError('Каталог PostgreSQL поддерживает ветки 17 и 18. Смена major требует отдельной миграции данных.')
     if kind=='redis' and not re.fullmatch(r'(?:docker.io/library/)?redis:(?:7|8)(?:[.\w-]*)',image):raise ValueError('Каталог Redis поддерживает ветки 7 и 8.')
     if kind=='kafka' and not re.fullmatch(r'(?:docker.io/)?apache/kafka:4\.(?:0|3)\.\d+',image):raise ValueError('Kafka: используйте apache/kafka:4.3.x')
@@ -43,16 +57,18 @@ def validate(config):
     if kind in ('postgres','redis','kafka') and host:raise ValueError('HTTP Ingress не применяется к PostgreSQL/Redis/Kafka')
     mode=config.get('storage_mode','new' if kind in STATEFUL else 'none')
     if mode not in ('none','new','existing') or (kind in STATEFUL and mode=='none'):raise ValueError('Выберите новый или существующий PVC')
+    if kind=='argocd' and mode!='none':raise ValueError('Argo CD хранит настройки в Kubernetes; PVC не требуется')
     claim=dns(config.get('pvc',''),'PVC') if mode=='existing' else ''
     mount=config.get('mount_path','/data')
     if not isinstance(mount,str) or not mount.startswith('/') or mount=='/' or '..' in mount.split('/'):raise ValueError('Укажите абсолютный путь монтирования')
-    credential=dns(config.get('storage_secret',''),'Secret с паролем') if mode=='existing' and kind in ('postgres','rabbitmq') else ''
+    credential=dns(config.get('storage_secret',''),'Secret с паролем') if mode=='existing' and kind in AUTH_TYPES else ''
     shovel=config.get('shovel',False)
     if shovel not in (True,False,'true','false'):raise ValueError('Некорректная настройка Shovel')
-    return dict(shovel=shovel in (True,'true'),storage_mode=mode,pvc=claim,mount_path=mount,storage_secret=credential,type=kind,name=dns(config.get('name',''),'имя приложения'),namespace=namespace(config.get('namespace','dev'),True),image=image,
-                replicas=number(config.get('replicas',1),1,1 if kind in STATEFUL else 10,'реплики'),
-                cpu=number(config.get('cpu',100),25,8000,'CPU, millicores'),memory=number(config.get('memory',1024 if kind=='kafka' else 512 if kind=='rabbitmq' else 256),768 if kind=='kafka' else 256 if kind=='rabbitmq' else 32,16384,'RAM, MiB'),
-                storage=number(config.get('storage',2),1,100,'диск, GiB'),port=number(config.get('port',CATALOG[kind]['port']),1,65535,'порт'),host=host)
+    integration=gitlab_apps.settings(config,dns,number) if kind in gitlab_apps.TYPES else {}
+    return dict(**integration,shovel=shovel in (True,'true'),storage_mode=mode,pvc=claim,mount_path=mount,storage_secret=credential,type=kind,name=dns(config.get('name',''),'имя приложения'),namespace=namespace(config.get('namespace','dev'),True),image=image,
+                replicas=number(config.get('replicas',1),1,1 if kind in STATEFUL or kind in ('argocd',)+gitlab_apps.TYPES else 10,'реплики'),
+                cpu=number(config.get('cpu',CATALOG[kind].get('cpu',100)),25,8000,'CPU, millicores'),memory=number(config.get('memory',CATALOG[kind].get('memory',1024 if kind=='kafka' else 512 if kind=='rabbitmq' else 256)),CATALOG[kind].get('memory',768 if kind=='kafka' else 256 if kind=='rabbitmq' else 32),16384,'RAM, MiB'),
+                storage=number(config.get('storage',CATALOG[kind].get('storage',2)),1,100,'диск, GiB'),port=number(config.get('port',CATALOG[kind]['port']),1,65535,'порт'),host=host)
 
 def claim_referenced(name,objects):
     for obj in objects:
@@ -76,6 +92,7 @@ def template_value(data):
     name=dns(data.get('name',''),'имя шаблона');items=data.get('apps')
     if not isinstance(items,list) or not 1<=len(items)<=10:raise ValueError('В шаблоне должно быть от 1 до 10 приложений')
     apps=[validate(c) for c in items]
+    if sum(a['type']=='argocd' for a in apps)>1:raise ValueError('В одном кластере поддерживается один Argo CD')
     if len({(a['namespace'],a['name']) for a in apps})!=len(apps):raise ValueError('Имена приложений в namespace должны отличаться')
     return dict(name=name,apps=apps)
 
@@ -201,7 +218,7 @@ class Apps:
             obj=self.get(kind,ns,name);labels=obj['metadata'].get('labels',{})
             if labels.get('app.kubernetes.io/managed-by')!=MANAGER or labels.get('lab.k3s/panel-for'):raise ValueError('В шаблон можно включить приложения, установленные через каталог')
             containers=obj['spec']['template']['spec']['containers']
-            if len(containers)!=1:raise ValueError('Наборы с несколькими контейнерами пока не поддерживаются')
+            if len(containers)!=1 and labels.get('lab.k3s/type') not in ('zabbix','keycloak','elk','loki'):raise ValueError('Наборы с несколькими контейнерами пока не поддерживаются')
             c=containers[0];ctype=labels.get('lab.k3s/type','custom');requests=c.get('resources',{}).get('requests',{})
             config=dict(shovel=obj['metadata'].get('annotations',{}).get('lab.k3s/shovel')=='true',type=ctype,name=name,namespace=ns,image=c['image'],replicas=obj['spec'].get('replicas',1),cpu=amount(requests.get('cpu','100m'),.001),memory=amount(requests.get('memory','256Mi'),1024**2),port=c.get('ports',[{'containerPort':8080}])[0]['containerPort'],host='',storage_mode='none')
             claims=obj['spec'].get('volumeClaimTemplates',[])
@@ -219,6 +236,7 @@ class Apps:
                     config['mount_path']=mount
             routes=self.get('ingress',ns)['items']
             if any(p.get('backend',{}).get('service',{}).get('name')==name for i in routes for rule in i.get('spec',{}).get('rules',[]) for p in rule.get('http',{}).get('paths',[])):config['host']=name
+            if ctype in gitlab_apps.TYPES:config.update(json.loads(obj['metadata'].get('annotations',{}).get('lab.k3s/gitlab-config','{}')))
             configs.append(validate(config))
         return save_template(dict(name=data.get('name'),apps=configs))
 
@@ -364,7 +382,9 @@ class Apps:
         managed=workload['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER
         delete_data=data.get('delete_data',False)
         if not isinstance(delete_data,bool):raise ValueError('Некорректный выбор удаления данных')
+        if managed and workload['metadata'].get('labels',{}).get('lab.k3s/type')=='argocd':return argocd_bundle.delete(self,ns,name)
         objects=self.get('deployments,statefulsets,services,ingresses,configmaps,secrets',ns)['items']
+        if managed and workload['metadata'].get('labels',{}).get('lab.k3s/type')in ('loki',)+gitlab_apps.TYPES:objects+=self.get('serviceaccounts,roles,rolebindings',ns)['items']
         try:objects+=self.get('middlewares.traefik.io',ns)['items']
         except ValueError as e:
             if "the server doesn't have a resource type" not in str(e):raise
@@ -403,15 +423,22 @@ class Apps:
         panel=secret(name+'-ui-auth')
         if panel:result['panels'].append({k:panel.get(k,'') for k in ('title','url','username','password')})
         ctype=workload['metadata']['labels'].get('lab.k3s/type')
-        if ctype in ('postgres','rabbitmq'):
-            env=workload['spec']['template']['spec']['containers'][0].get('env',[])
-            secret_name=next((e.get('valueFrom',{}).get('secretKeyRef',{}).get('name') for e in env if e['name'] in ('POSTGRES_PASSWORD','RABBITMQ_DEFAULT_PASS')),name+'-auth')
-            credentials=secret(secret_name);result['username']='app';result['password']=credentials.get('password','')
+        if ctype in AUTH_TYPES:
+            env=[e for container in workload['spec']['template']['spec']['containers'] for e in container.get('env',[])]
+            secret_name=next((e.get('valueFrom',{}).get('secretKeyRef',{}).get('name') for e in env if e['name'] in ('POSTGRES_PASSWORD','RABBITMQ_DEFAULT_PASS','GF_SECURITY_ADMIN_PASSWORD','KC_DB_PASSWORD','ADMIN_PASSWORD')),name+'-auth')
+            credentials=secret(secret_name);result['username']='admin' if ctype in ('grafana','keycloak','elk','loki') else 'app';result['password']=credentials.get('password','')
+            if ctype=='elk':result['note']='ELK: Kibana подключена к Elasticsearch. HTTP-приём Logstash: http://'+name+'.'+ns+'.svc.cluster.local:8080, пользователь lab_ingest, пароль тот же. Elasticsearch: порт 9200. Доступ HTTP для доверенной лабораторной сети.'
+            if ctype=='zabbix':
+                result['username']='Admin';result['password']='';result['note']='Первый вход в Zabbix: Admin / zabbix. После входа измените пароль. При повторном использовании PVC действует ранее установленный пароль.'
+            elif ctype in ('grafana','keycloak'):result['note']='Показан начальный пароль. После его изменения в приложении используйте новый пароль.'
         else:result['note']='У приложения нет отдельного пароля подключения.'
+        if ctype in gitlab_apps.TYPES:result['note']='Исходящее подключение к GitLab. Токен хранится в отдельном Secret; проверьте статус Online/Connected в GitLab. Удаление приложения не удаляет Runner/Agent из GitLab и не отзывает токен.'
+        if ctype=='argocd':result.update(username='admin',password=secret('argocd-initial-admin-secret').get('password',''),note='Начальный пароль Argo CD. Если пароль изменён или начальный Secret удалён, используйте установленный вами пароль.')
+        if ctype=='loki':result['note']='Grafana уже подключена к Loki. Explore → Loki; логи Pods этого namespace собирает Alloy. Хранение 7 дней. Пароль начальный, после смены используйте новый.'
         for ingress in self.get('ingress',ns)['items']:
             for rule in ingress.get('spec',{}).get('rules',[]):
                 if any(p.get('backend',{}).get('service',{}).get('name')==name for p in rule.get('http',{}).get('paths',[])):
-                    result['panels'].append(dict(title='RabbitMQ Management' if ctype=='rabbitmq' else 'Сайт приложения',url='http://'+rule['host']+'/',username=result.get('username',''),password=result.get('password','')))
+                    result['panels'].append(dict(title={'rabbitmq':'RabbitMQ Management','grafana':'Grafana','prometheus':'Prometheus','zabbix':'Zabbix','keycloak':'Keycloak','elk':'Kibana · ELK','loki':'Grafana · Loki','argocd':'Argo CD'}.get(ctype,'Сайт приложения'),url='http://'+rule['host']+'/',username=result.get('username',''),password=result.get('password','')))
         return result
     def workload_pods(self,data):
         ns=namespace(data.get('namespace'));name=resource_name(data.get('name'));kind=data.get('kind')
@@ -447,6 +474,10 @@ class Apps:
         return config['host']+('.app.' if config['host'][-1].isdigit() else '.')+ip+'.sslip.io'
     def plan(self,config):
         c=validate(config);ns=c['namespace'];name=c['name'];kind='StatefulSet' if c['type'] in STATEFUL else 'Deployment'
+        if c['type'] in gitlab_apps.TYPES:return gitlab_apps.build(c,MANAGER)
+        if c['type'] in catalog_services.CATALOG:
+            host=self.host(dict(c,host=c['host'] or name+'-'+ns))
+            return catalog_services.build(c,host,MANAGER)
         labels={'app.kubernetes.io/managed-by':MANAGER,'app.kubernetes.io/name':name,'lab.k3s/type':c['type']}
         selector={'lab.k3s/app':name}
         def resource(api,kind,n=name):return dict(apiVersion=api,kind=kind,metadata=dict(name=n,namespace=ns,labels=labels.copy()))
@@ -496,6 +527,7 @@ class Apps:
         return c,kind,objects,host
     def check_storage(self,config):
         c=validate(config)
+        if c['type'] in gitlab_apps.TYPES:gitlab_apps.check_secret(self,c)
         if c['storage_mode']=='existing':
             pvc=self.find('pvc',c['namespace'],c['pvc'])
             if not pvc or pvc.get('metadata',{}).get('deletionTimestamp') or pvc.get('status',{}).get('phase')!='Bound' or pvc.get('spec',{}).get('volumeMode','Filesystem')!='Filesystem':raise ValueError('Нужен готовый Filesystem PVC в выбранном namespace')
@@ -503,15 +535,17 @@ class Apps:
             if claim_referenced(c['pvc'],self.get('deployments,statefulsets,daemonsets,jobs,cronjobs',c['namespace'])['items']):raise ValueError('PVC используется существующим приложением, даже если оно остановлено. Выберите другой PVC.')
             if c['storage_secret']:
                 secret=self.find('secret',c['namespace'],c['storage_secret'])
-                if not secret or not secret.get('data',{}).get('password'):raise ValueError('Secret должен содержать ключ password с прежним паролем базы (пользователь app)')
+                if not secret or not secret.get('data',{}).get('password'):raise ValueError('Secret должен содержать ключ password с прежним паролем приложения или базы')
+                if c['type']=='elk' and len(base64.b64decode(secret['data']['password']).decode())<32:raise ValueError('ELK: прежний пароль в Secret должен содержать не менее 32 символов для шифрования Kibana')
         if c['storage_mode']=='new':
             name=('data-'+c['name']+'-0') if c['type'] in STATEFUL else c['name']+'-data'
             if self.find('pvc',c['namespace'],name):raise ValueError('PVC '+c['namespace']+'/'+name+' уже существует. Выберите другое имя приложения или существующий PVC.')
-            if c['type'] in ('postgres','rabbitmq') and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Secret '+c['name']+'-auth уже существует. Для новой базы выберите другое имя приложения.')
+            if c['type'] in AUTH_TYPES and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Secret '+c['name']+'-auth уже существует. Для новой базы выберите другое имя приложения.')
         return dict(ok=True,message='Хранилище проверено в namespace '+c['namespace']+'.' if c['storage_mode']!='none' else 'PVC не требуется.')
 
     def preflight(self,config):
         c,kind,objects,host=self.plan(config)
+        if c['type']=='argocd':return argocd_bundle.preflight(self,(c,kind,objects,host),MANAGER)
         self.check_storage(c)
         for obj in objects:
             if obj['kind']=='Ingress':
@@ -522,7 +556,7 @@ class Apps:
         for other in ('Deployment','StatefulSet'):
             if self.find(other,c['namespace'],c['name']):raise ValueError('Приложение с таким именем уже существует')
         if host and any(r.get('host')==host for i in self.get('ingress')['items'] for r in i.get('spec',{}).get('rules',[])):raise ValueError('Этот hostname уже используется Ingress')
-        if c['type'] in ('postgres','rabbitmq') and not c['storage_secret'] and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Сохранённый Secret уже существует. Для новых данных выберите свободное имя приложения; для восстановления выберите существующий PVC и Secret.')
+        if c['type'] in AUTH_TYPES and not c['storage_secret'] and self.find('secret',c['namespace'],c['name']+'-auth'):raise ValueError('Сохранённый Secret уже существует. Для новых данных выберите свободное имя приложения; для восстановления выберите существующий PVC и Secret.')
         if kind=='StatefulSet' and c['storage_mode']=='new' and self.find('pvc',c['namespace'],'data-'+c['name']+'-0'):raise ValueError('Сохранённый PVC уже существует. Выберите его в списке существующих PVC или задайте новое имя приложения для нового диска.')
         return c,kind,objects,host
     def wait_rollout(self,kind,name,ns,seconds=240):
@@ -559,6 +593,8 @@ class Apps:
                 if obj['kind'] not in ('Deployment','StatefulSet'):continue
                 for _ in range(obj['spec'].get('replicas',1)):
                     demands.append((obj['metadata']['name'],pod_budget(obj['spec']['template']['spec'])))
+            if c['type']=='gitlab-runner':
+                for _ in range(c['concurrent']):demands.append((c['name']+' / CI job',{'cpu':0.35,'memory':384*1024**2}))
         for name,need in sorted(demands,key=lambda v:v[1]['memory'],reverse=True):
             node=next((n for n in candidates if all(budget[n['metadata']['name']]['allocatable'][k]-budget[n['metadata']['name']]['requests'][k]>=need[k] for k in need)),None)
             if node is None:
@@ -576,14 +612,15 @@ class Apps:
 
     def deploy(self,config,prepared=None):
         c,kind,objects,host=prepared or self.preflight(config);ns=c['namespace'];name=c['name']
+        if c['type']=='argocd':return argocd_bundle.deploy(self,(c,kind,objects,host))
         print('TASK [Создать '+ns+'/'+name+']',flush=True)
         if not self.find('namespace',None,ns):self.apply([{'apiVersion':'v1','kind':'Namespace','metadata':{'name':ns}}])
-        if c['type'] in ('postgres','rabbitmq') and not c['storage_secret']:
+        if c['type'] in AUTH_TYPES and not c['storage_secret']:
             self.kubectl(['create','-f','-'],dict(apiVersion='v1',kind='Secret',metadata=dict(name=name+'-auth',namespace=ns),type='Opaque',stringData={'password':secrets.token_urlsafe(32)}))
         images=[container['image'] for obj in objects if obj['kind'] in ('Deployment','StatefulSet') for container in obj['spec']['template']['spec'].get('containers',[])+obj['spec']['template']['spec'].get('initContainers',[])]
         self.image_cache('restore',images)
         self.apply(objects)
-        print(self.wait_rollout(kind,name,ns),flush=True)
+        print(self.wait_rollout(kind,name,ns,600 if c['type'] in catalog_services.CATALOG else 240),flush=True)
         self.check(c,kind,host)
         if c['type'] in app_panels.IMAGES:
             print(self.wait_rollout('Deployment',name+'-ui',ns,300),flush=True)
@@ -608,8 +645,17 @@ class Apps:
         script='import socket,sys; h,p=sys.argv[1],int(sys.argv[2]); socket.getaddrinfo(h,p); c=socket.create_connection((h,p),10); c.close(); print("DNS/TCP OK")'
         if c['type']=='nginx' or host:
             script+='; import urllib.request; r=urllib.request.urlopen("http://"+h+":"+str(p)+"/",timeout=10); print("HTTP",r.status); r.close()'
-        command=['python','-c',script,dnsname,str(15672 if c['type']=='rabbitmq' and host else c['port'])]
+        if c['type']=='loki':script=script.replace('str(p)+"/"','str(p)+"/ready"')
+        if c['type']=='argocd':argocd_bundle.ready(self,ns,name)
+        if c['type']=='keycloak':script=script.replace('str(p)+"/"','str(p)+"/realms/master"')
+        command=['python','-c',script,dnsname,str(15672 if c['type']=='rabbitmq' and host else 8080 if c['type']=='zabbix' and host else c['port'])]
         manifest={'apiVersion':'v1','kind':'Pod','metadata':{'name':probe,'namespace':ns},'spec':{'restartPolicy':'Never','activeDeadlineSeconds':90,'containers':[{'name':'check','image':'python:3.13-alpine','command':command,'resources':{'requests':{'cpu':'10m','memory':'16Mi'},'limits':{'cpu':'100m','memory':'64Mi'}}}]}}
+        if c['type']=='elk':
+            workload=self.get(kind,ns,name)
+            auth=next(e['valueFrom']['secretKeyRef']['name'] for e in workload['spec']['template']['spec']['containers'][0]['env'] if e['name']=='ADMIN_PASSWORD')
+            container=manifest['spec']['containers'][0]
+            container['command']=['python','-c',elk_stack.CHECK_SCRIPT,dnsname]
+            container['env']=[{'name':'STACK_PASSWORD','valueFrom':{'secretKeyRef':{'name':auth,'key':'password'}}}]
         try:
             self.apply([manifest]);end=time.monotonic()+110
             while time.monotonic()<end:
@@ -628,6 +674,9 @@ class Apps:
             result=self.kubectl(['exec','-n',ns,target,'--','redis-cli','-h',dnsname,'PING'])
             if 'PONG' not in result:raise ValueError('Redis PING не прошёл')
             print('Redis PING через Service: OK',flush=True)
+        if c['type']=='gitlab-runner':
+            try:self.kubectl(['exec','-n',ns,target,'--','gitlab-runner','verify','--config','/runtime/config.toml'],timeout=45)
+            except Exception:raise ValueError('Runner не подтвердил подключение к GitLab. Проверьте URL, токен и доступ из кластера.') from None
         if c['type']=='kafka':
             self.kubectl(['exec','-n',ns,target,'--','/opt/kafka/bin/kafka-topics.sh','--bootstrap-server',dnsname+':9092','--list'],timeout=60)
             print('Kafka broker metadata: OK',flush=True)
@@ -643,9 +692,12 @@ class Apps:
         if kind not in ('Deployment','StatefulSet'):raise ValueError('Поддерживаются Deployment и StatefulSet')
         obj=self.get(kind,ns,name);target=kind.lower()+'/'+name
         containers=obj['spec']['template']['spec']['containers'];ctype=obj['metadata'].get('labels',{}).get('lab.k3s/type','custom')
+        if ctype in gitlab_apps.TYPES and action in ('app_update','app_rollback'):raise ValueError('Для изменения интеграции пересоздайте её с сохранённым Secret; подключение в GitLab не удаляется')
+        if ctype=='argocd' and action in ('app_update','app_rollback'):raise ValueError('Argo CD управляется полным набором манифестов; изменение отдельного контейнера недоступно')
         if action=='app_update':
             image=data.get('image','');container=data.get('container')
             if container not in [c['name'] for c in containers]:raise ValueError('Выберите контейнер')
+            if ctype in ('zabbix','keycloak','elk','loki') and container!=ctype:raise ValueError('Обновляйте основной контейнер приложения. Вспомогательные контейнеры управляются каталогом.')
             validate(dict(type=ctype,image=image,name=name,namespace=ns))
             if ctype in ('postgres','redis'):
                 old=next(c['image'] for c in containers if c['name']==container)
@@ -653,6 +705,13 @@ class Apps:
             replicas=number(data.get('replicas',1),0,1 if ctype in STATEFUL else 10,'реплики')
             if replicas>1 and any(v.get('persistentVolumeClaim') for v in obj['spec']['template']['spec'].get('volumes',[])):raise ValueError('Для приложения с одним PVC разрешена только одна реплика')
             patch={'spec':{'replicas':replicas,'template':{'spec':{'containers':[{'name':container,'image':image}]}}}}
+            if ctype=='elk':
+                old=containers[0]['image'].rsplit(':',1)[1]
+                if tuple(map(int,image.rsplit(':',1)[1].split('.')))<tuple(map(int,old.split('.'))):raise ValueError('ELK: понижение версии требует восстановления данных из резервной копии')
+                bundle=elk_stack.images(image.rsplit(':',1)[1])
+                patch['spec']['template']['spec']['containers'].extend([{'name':n,'image':bundle[n]} for n in ('kibana','logstash')])
+                patch['spec']['template']['spec']['initContainers']=[{'name':'elk-setup','image':bundle['elasticsearch']}]
+            if ctype=='zabbix':patch['spec']['template']['spec']['containers'].append({'name':'web','image':'zabbix/zabbix-web-nginx-pgsql:'+image.rsplit(':',1)[1]})
             self.kubectl(['patch',target,'-n',ns,'--type=strategic','-p',json.dumps(patch)])
         elif action=='app_rollback':
             if ctype in STATEFUL:raise ValueError('Откат образа базы может быть несовместим с данными. Восстановление базы выполняйте отдельно.')

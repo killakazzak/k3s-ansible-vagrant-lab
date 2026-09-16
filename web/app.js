@@ -143,7 +143,7 @@ for(const id of ['cancel','close'])$(id).onclick=()=>$('modal').close();
 $('refresh').onclick=async()=>{await loadClusters();await refresh();await loadLinks()};
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav').forEach(n=>n.classList.remove('active'));b.classList.add('active');if(b.dataset.view==='overview')window.scrollTo({top:0,behavior:'smooth'});else $(b.dataset.view).scrollIntoView({behavior:'smooth',block:'start'})});
 let polling=false;
-async function poll(){if(polling)return;polling=true;try{const job=await api('job');activeJob=job;renderProgress();if(job){deployingCluster=job.state==='running' && ['create','version','add_master','add_worker'].includes(job.action)?(job.cluster||'default'):null;setBusy(job.state==='running');$('job-status').textContent='['+(job.cluster||'default')+'] '+(job.state==='running'?'Выполняется…':job.state==='success'?'Завершено':'Ошибка — проверьте журнал');const log=$('log');const bottom=log.scrollHeight-log.scrollTop-log.clientHeight<50;log.textContent=job.log.replace(/\x1b\[[0-9;]*m/g,'')||'Запускаем операцию…';if(bottom)log.scrollTop=log.scrollHeight;if(lastJob!==job.id+job.state){lastJob=job.id+job.state;if(job.state!=='running')await loadClusters();await refresh();if(job.state!=='running'){await loadLinks()}}}}catch(e){error(e.message)}finally{polling=false}}
+async function poll(){if(polling)return;polling=true;try{const job=await api('job');activeJob=job;renderInstallQueue(job?.queue||[]);$('job-export').disabled=!job;renderProgress();if(job){deployingCluster=job.state==='running' && ['create','version','add_master','add_worker'].includes(job.action)?(job.cluster||'default'):null;setBusy(job.state==='running');$('job-status').textContent='['+(job.cluster||'default')+'] '+(job.state==='running'?'Выполняется…':job.state==='success'?'Завершено':'Ошибка — проверьте журнал');const log=$('log');const bottom=log.scrollHeight-log.scrollTop-log.clientHeight<50;log.textContent=job.log.replace(/\x1b\[[0-9;]*m/g,'')||'Запускаем операцию…';if(bottom)log.scrollTop=log.scrollHeight;if(lastJob!==job.id+job.state){lastJob=job.id+job.state;if(job.state!=='running')await loadClusters();await refresh();if(job.state!=='running'){await loadLinks()}}}}catch(e){error(e.message)}finally{polling=false}}
 async function loadClusters(){
   const names=await api('clusters');
   clusterCount=names.length;
@@ -297,3 +297,14 @@ function renderNodeUsage(){
 }
 async function refreshNodeUsage(){if(nodeUsageBusy)return;nodeUsageBusy=true;const cluster=selectedCluster;try{const data=await api('node-utilization');if(cluster!==selectedCluster)return;nodeUsage=data;nodeUsageCluster=cluster;nodeUsageError='';}catch(e){if(cluster===selectedCluster){nodeUsage=[];nodeUsageCluster=cluster;nodeUsageError='Метрики недоступны';}}finally{nodeUsageBusy=false;renderNodeUsage();if(cluster!==selectedCluster)refreshNodeUsage()}}
 $('cluster-select').addEventListener('change',()=>{nodeUsage=[];nodeUsageCluster=null;nodeUsageError='';renderNodeUsage();refreshNodeUsage()});$('refresh').addEventListener('click',refreshNodeUsage);setInterval(()=>{if(!document.hidden)refreshNodeUsage()},15000);refreshNodeUsage();
+
+$('job-export').onclick=async()=>{
+ const job=activeJob;if(!job)return;const button=$('job-export');button.disabled=true;
+ try{const data=await api('job-log?id='+encodeURIComponent(job.id));const url=URL.createObjectURL(new Blob([data.text],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=data.filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}catch(e){error('Не удалось скачать журнал: '+e.message)}finally{button.disabled=!activeJob;}
+};
+
+function renderInstallQueue(items){
+ const box=$('install-queue');box.hidden=!items.length;box.replaceChildren();if(!items.length)return;
+ box.append(element('strong','Очередь установок · '+items.length));
+ for(const [i,item] of items.entries()){const row=element('div',undefined,'install-queue-row');row.append(element('span',(i+1)+'. '+item.title+' · '+item.cluster));const cancel=element('button','Убрать','button secondary');cancel.onclick=async()=>{cancel.disabled=true;try{await api('action',{action:'cancel_install',params:{id:item.id},confirmed:true});await poll()}catch(e){error(e.message);cancel.disabled=false}};row.append(cancel);box.append(row)}
+}

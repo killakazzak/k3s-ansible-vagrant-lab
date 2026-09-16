@@ -236,23 +236,20 @@ class ClusterIsolationTests(unittest.TestCase):
                 self.assertEqual(backups[0].read_text(), 'keep')
             app.CONTEXT.root = app.ROOT
     def test_deleted_vms_are_not_reported_as_cluster(self):
-        cfg = {'nodes':[{'name':'one','vagrant_id':'one'}]}
+        cfg = {'provider':'virtualbox', 'nodes':[{'name':'one','vagrant_id':'nonexistent-test-vm'}]}
         with patch.object(app, 'config', return_value=cfg), patch.object(app, 'capture', return_value='0,one,state,not_created') as run:
             state = app.status()
             self.assertFalse(state['exists'])
             self.assertFalse(state['reachable'])
             self.assertEqual(state['nodes'][0]['state'], 'Absent')
-            self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_count, 0)
 
 class RepeatedLaunchTests(unittest.TestCase):
     def test_reuses_existing_server_and_keeps_private_url(self):
         import tempfile, shutil, subprocess, sys, os
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            (root / 'web').mkdir()
-            shutil.copy(Path(app.__file__), root / 'web/server.py')
-            for name in ('terminal_sessions.py', 'terminal_child.py', 'topology.py', 'lab_apps.py', 'app_panels.py', 'profile_layout.py'):
-                shutil.copy(Path(app.__file__).with_name(name), root / 'web' / name)
+            shutil.copytree(Path(app.__file__).parent, root / 'web')
             command = [sys.executable, str(root / 'web/server.py'), '--port', '0']
             first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
@@ -286,7 +283,7 @@ class TimingTests(unittest.TestCase):
 class VisibleClusterTests(unittest.TestCase):
     def test_empty_profiles_hidden_but_pending_creation_visible(self):
         original = app.active_root()
-        with patch.object(app, 'cluster_names', return_value=['default','k8s-cluster2']), patch.object(app, 'cluster_root', side_effect=lambda n: n), patch.object(app, 'config', side_effect=lambda: {'nodes': [] if app.active_root() == 'default' else [{'name':'master'}]}):
+        with patch.object(app, 'cluster_names', return_value=['default','k8s-cluster2']), patch.object(app, 'cluster_root', side_effect=lambda n: n), patch.object(app.remote_clusters, 'external', return_value=False), patch.object(app, 'config', side_effect=lambda: {'nodes': [] if app.active_root() == 'default' else [{'name':'master'}]}):
             self.assertEqual(app.visible_clusters(), ['k8s-cluster2'])
         self.assertEqual(app.active_root(), original)
         with patch.object(app, 'cluster_names', return_value=['default']), patch.object(app, 'config', return_value={'nodes':[]}):

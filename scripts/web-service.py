@@ -35,8 +35,15 @@ def running_url():
     return url
 
 def show_connection(url, open_browser=False):
-    print('\nСсылка для подключения:')
+    print('\nНа этом компьютере:')
     print(url)
+    try:
+        data = json.loads((ROOT / '.cache/web.lock').read_text())
+        for network_url in data.get('network_urls', []):
+            print('\nДоступ по сети — откройте на другом компьютере:')
+            print(network_url)
+    except (OSError, ValueError):
+        pass
     print()
     if not open_browser or not sys.stdin.isatty() or not sys.stdout.isatty():
         return

@@ -1,0 +1,1 @@
+Brand SVG paths embedded in apps.js are from Simple Icons (https://github.com/simple-icons/simple-icons), CC0-1.0. Retrieved 2026-09-16. Brand names and marks belong to their respective owners. Loki uses the Grafana family icon; Zabbix and custom image use text symbols. No runtime external image requests.

@@ -72,15 +72,22 @@ def main():
         from lab_apps import dns, MANAGER
         targets=params.get('apps',[])
         if not isinstance(targets,list) or not 1<=len(targets)<=50:raise ValueError('Выберите от 1 до 50 приложений')
-        workloads={}
+        workloads={};argo_targets=[]
         for target in targets:
             kind=target.get('kind');ns=namespace(target.get('namespace'),True);name=dns(target.get('name'))
             if kind not in ('Deployment','StatefulSet'):raise ValueError('Неизвестный тип приложения')
-            obj=apps.get(kind,ns,name);workloads[(kind,ns,name)]=obj
+            obj=apps.get(kind,ns,name)
+            if obj['metadata'].get('labels',{}).get('lab.k3s/type')=='argocd' and obj['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER:
+                if (ns,name) not in argo_targets:argo_targets.append((ns,name))
+                continue
+            workloads[(kind,ns,name)]=obj
             if obj['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER:
                 panel=apps.find('Deployment',ns,name+'-ui')
                 if panel and panel['metadata'].get('labels',{}).get('lab.k3s/panel-for')==name and panel['metadata'].get('labels',{}).get('app.kubernetes.io/managed-by')==MANAGER:
                     workloads[('Deployment',ns,name+'-ui')]=panel
+        for ns,name in argo_targets:
+            from argocd_bundle import lifecycle
+            lifecycle(apps,ns,name,action)
         for (kind,ns,name),obj in workloads.items():
             target=kind.lower()+'/'+name
             print('TASK ['+action+' '+ns+'/'+name+']',flush=True)
