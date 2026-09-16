@@ -62,7 +62,7 @@ listen_address = ":9252"
 '''.replace('CONCURRENT',str(c['concurrent'])).replace('NAMESPACE',json.dumps(ns)).replace('JOB_ACCOUNT',json.dumps(name+'-job'))
   objects.append(obj('v1','ConfigMap',data={'config.template.toml':config,'base.toml':config.split('[[runners]]')[0]}))
   pod['volumes']=[{'name':'config','configMap':{'name':name}},{'name':'runtime','emptyDir':{}}]
-  container['env']=[{'name':'CI_SERVER_URL','value':c['gitlab_url']},{'name':'RUNNER_TOKEN','valueFrom':{'secretKeyRef':{'name':c['gitlab_secret'],'key':'runner-token'}}},{'name':'RUNNER_EXECUTOR','value':'kubernetes'}]
+  container['env']=[{'name':'CI_SERVER_URL','value':c['gitlab_url']},{'name':'CI_SERVER_TOKEN','valueFrom':{'secretKeyRef':{'name':c['gitlab_secret'],'key':'runner-token'}}},{'name':'RUNNER_EXECUTOR','value':'kubernetes'}]
   container['command']=['/bin/sh','-ec','cp /config/base.toml /runtime/config.toml; gitlab-runner register --non-interactive --config /runtime/config.toml --template-config /config/config.template.toml; exec gitlab-runner run --config /runtime/config.toml --working-directory /runtime']
   container['volumeMounts']=[{'name':'config','mountPath':'/config','readOnly':True},{'name':'runtime','mountPath':'/runtime'}]
   container['readinessProbe']={'httpGet':{'path':'/metrics','port':'app'},'periodSeconds':10}
@@ -81,3 +81,29 @@ listen_address = ":9252"
  workload=obj('apps/v1','Deployment',spec={'replicas':1,'strategy':{'type':'Recreate'},'selector':{'matchLabels':selector},'template':{'metadata':{'labels':dict(labels,**selector)},'spec':pod}});workload['metadata']['annotations']=annotations
  objects.extend([obj('v1','ServiceAccount'),obj('rbac.authorization.k8s.io/v1','Role',rules=rules),obj('rbac.authorization.k8s.io/v1','RoleBinding',roleRef={'apiGroup':'rbac.authorization.k8s.io','kind':'Role','name':name},subjects=[{'kind':'ServiceAccount','name':name,'namespace':ns}]),workload,obj('v1','Service',spec={'selector':selector,'ports':[{'name':'app','port':c['port'],'targetPort':'app'}]})])
  return c,'Deployment',objects,''
+
+def rotate_runner_token(app,data):
+ import app_editor,secrets
+ ns,name,kind,workload=app_editor.load(app,data)
+ if kind!='Deployment' or workload['metadata']['labels'].get('lab.k3s/type')!='gitlab-runner':raise ValueError('Выберите GitLab Runner из каталога')
+ token=data.get('token','')
+ if not isinstance(token,str) or not token.startswith('glrt-') or not 8<=len(token)<=4096 or any(c.isspace() for c in token):raise ValueError('Введите новый authentication token glrt- из GitLab')
+ if data.get('resource_version')!=workload['metadata']['resourceVersion']:raise ValueError('Runner изменился. Откройте редактирование заново.')
+ secret_name=name[:40]+'-token-'+secrets.token_hex(4)
+ config=json.loads(workload['metadata'].get('annotations',{}).get('lab.k3s/gitlab-config','{}'));config['gitlab_secret']=secret_name
+ containers=workload['spec']['template']['spec']['containers']
+ container=next((c for c in containers if c['name']=='gitlab-runner'),None)
+ if not container:raise ValueError('Контейнер Runner не найден')
+ env=[e for e in container.get('env',[]) if e['name'] not in ('RUNNER_TOKEN','CI_SERVER_TOKEN')]
+ env.append({'name':'CI_SERVER_TOKEN','valueFrom':{'secretKeyRef':{'name':secret_name,'key':'runner-token'}}})
+ secret=dict(apiVersion='v1',kind='Secret',metadata=dict(name=secret_name,namespace=ns),type='Opaque',stringData={'runner-token':token})
+ patch=[{'op':'test','path':'/metadata/resourceVersion','value':data['resource_version']},{'op':'add','path':'/metadata/annotations','value':dict(workload['metadata'].get('annotations',{}),**{'lab.k3s/gitlab-config':json.dumps(config)})},{'op':'add','path':'/spec/template/spec/containers/'+str(containers.index(container))+'/env','value':env}]
+ command=['patch','deployment',name,'-n',ns,'--type=json','-p',json.dumps(patch)]
+ try:
+  app.kubectl(['create','--dry-run=server','-f','-','-o','name'],secret)
+  app.kubectl(command+['--dry-run=server','-o','name'])
+  app.kubectl(['create','-f','-','-o','name'],secret)
+ except Exception:raise ValueError('Не удалось сохранить новый токен. Проверьте права на создание Secrets и изменение Deployment.') from None
+ try:app.kubectl(command)
+ except Exception:raise ValueError('Новый токен сохранён в Secret '+secret_name+', но Runner не обновлён. Откройте редактирование заново и повторите операцию.') from None
+ return {'ok':True,'message':'Новый токен сохранён. Конфигурация Runner обновлена; при запуске Pod выполнится повторная регистрация. Проверьте статус Online в GitLab.'}

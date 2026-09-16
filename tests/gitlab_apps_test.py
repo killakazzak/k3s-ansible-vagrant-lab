@@ -5,6 +5,12 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'web'))
 import lab_apps as lab
 import gitlab_apps as gl
 class GitlabTests(unittest.TestCase):
+ def test_runner_authentication_token_environment(self):
+  _,_,items,_=lab.Apps('/tmp').plan(self.config())
+  container=next(o for o in items if o['kind']=='Deployment')['spec']['template']['spec']['containers'][0]
+  env={v['name']:v for v in container['env']}
+  self.assertNotIn('RUNNER_TOKEN',env)
+  self.assertEqual(env['CI_SERVER_TOKEN']['valueFrom']['secretKeyRef'],{'name':'ci-token','key':'runner-token'})
  def config(self,kind='gitlab-runner',**kw):return dict(type=kind,name='ci',namespace='gitlab-ci',gitlab_secret='ci-token',**kw)
  def test_runner_isolated_jobs_and_no_token_in_templates(self):
   c,k,items,host=lab.Apps('/tmp').plan(self.config(concurrent=2));self.assertEqual(k,'Deployment');self.assertEqual(host,'')

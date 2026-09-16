@@ -6,7 +6,7 @@ function syncGraphMotion(){const paused=graphPaused||graphReducedMotion.matches|
 const svgNS='http://www.w3.org/2000/svg';
 function svgEl(tag,attrs={},text){const el=document.createElementNS(svgNS,tag);for(const [k,v] of Object.entries(attrs))el.setAttribute(k,v);if(text!==undefined)el.textContent=text;return el;}
 function routeURLs(route){
- if(!route)return [];
+ if(!route||route.controllerOnly||['TCP','UDP','TLS'].includes(route.protocol))return [];
  let host=route.host,paths=[route.path];
  if(route.kind==='IngressRoute'){
   // Only derive clickable URLs from a single literal Host rule.
@@ -19,7 +19,7 @@ function routeURLs(route){
  if(!/^[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(host)||host.includes('..'))return [];
  return [...new Set(paths)].filter(p=>typeof p==='string'&&p.startsWith('/')&&!/[?#\\\s]/.test(p)).map(path=>{
   if(route.internal==='api@internal'&&path==='/dashboard')path='/dashboard/';
-  return (route.tls?'https://':'http://')+host+path;
+  return (route.tls?'https://':'http://')+host+(route.entryPort?':'+route.entryPort:'')+path;
  });
 }
 function workloadLabel(p){const w=p.workload;return w?`${w.kind} / ${w.name}`:'Владелец неизвестен';}
@@ -28,13 +28,14 @@ function renderRouteInfo(route,svc,pods){
  const box=$('graph-route-info');box.replaceChildren();
  if(!route)return;
  const add=(tag,text,cls)=>{const el=document.createElement(tag);el.textContent=text;if(cls)el.className=cls;return el;};
- const heading=add('div','Куда ведёт ссылка','route-caption');box.append(heading);
+ const heading=add('div',route.controllerOnly?'Ingress-контроллер без маршрутов':'Куда ведёт ссылка','route-caption');box.append(heading);
  const urls=routeURLs(route);
  for(const url of urls){
   const row=add('div','','route-url-row');const link=add('a',url+' ↗','route-url');link.href=url;link.target='_blank';link.rel='noopener noreferrer';row.append(link);
   const button=add('button','Копировать','button secondary');button.type='button';button.onclick=async()=>{try{await navigator.clipboard.writeText(url);button.textContent='Скопировано';setTimeout(()=>button.textContent='Копировать',1800)}catch{button.textContent='Выделите ссылку для копирования'}};row.append(button);box.append(row);
  }
- if(!urls.length)box.append(add('p','Точный URL нельзя вывести из этого правила. Хост / условие: '+route.host+' · '+route.path));
+ if(route.controllerOnly)box.append(add('p','Контроллер установлен. Создайте публикацию приложения и выберите этот IngressClass. Ниже показаны Service и Pods самого контроллера.'));
+ if(!urls.length&&!route.controllerOnly)box.append(add('p','Точный URL нельзя вывести из этого правила. Хост / условие: '+route.host+' · '+route.path));
  const purpose=route.internal==='api@internal'?'Панель и API Traefik':route.name==='rancher'?'Rancher — управление Kubernetes':route.name==='nginx-demo'?'Тестовый сайт Nginx':'Приложение '+(svc?svc.name:route.name);
  box.append(add('div',purpose,'route-purpose'));
  const list=add('dl','','route-destinations');
@@ -61,7 +62,7 @@ function drawGraph(){
  const h=Math.max(340,100+Math.max(pods.length,nodes.length)*105);svg.setAttribute('viewBox',`0 0 1280 ${h}`);svg.style.height=h+'px';
  const defs=svgEl('defs'),marker=svgEl('marker',{id:'route-arrow',viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:5,markerHeight:5,orient:'auto'});marker.append(svgEl('path',{d:'M0 0 L10 5 L0 10 Z',fill:'#74a993'}));defs.append(marker);svg.append(defs);
  const edges=svgEl('g');svg.append(edges);
- const heads=['КЛИЕНТ','INGRESS / TRAEFIK','SERVICE','PODS','УЗЛЫ КЛАСТЕРА'];
+ const heads=['КЛИЕНТ','INGRESS / КОНТРОЛЛЕР','SERVICE','PODS','УЗЛЫ КЛАСТЕРА'];
  const xs=[20,255,510,765,1020];heads.forEach((t,i)=>svg.append(svgEl('text',{x:xs[i]+8,y:30,class:'graph-heading'},t)));
  const positions=new Map();
  function card(id,col,y,title,subtitle,type,ready,detail){
@@ -91,8 +92,8 @@ function drawGraph(){
   }
  }
  nodes.forEach((n,i)=>card('node:'+n.id,4,60+i*105,n.name,n.role+' · '+n.ip,'node '+(n.role==='Master'?'master':''),n.ready,`${n.role}: ${n.name} · IP ${n.ip} · ${n.ready?'Ready':'NotReady'} · На узле размещено ${graphData.pods.filter(p=>p.node===n.id).length} Pod.`));
- if(!route){syncGraphMotion();card('empty',1,100,'Нет Ingress','Узлы показаны справа','',null,'Создайте Ingress или IngressRoute, чтобы увидеть путь запроса.');return;}
- card('user',0,100,'Пользователь','HTTP / HTTPS','client',null,'Клиент обращается по хосту и пути выбранного маршрута.');
+ if(!route){syncGraphMotion();card('empty',1,100,'Нет маршрутов','Узлы показаны справа','',null,'Создайте публикацию приложения. Установка контроллера сама по себе не создаёт маршрут к приложению.');return;}
+ card('user',0,100,'Пользователь',route.protocol||'HTTP / HTTPS','client',null,'Клиент обращается по хосту и пути выбранного маршрута.');
  card('ingress',1,100,route.name,route.kind+' · '+route.namespace,'ingress',null,`${route.kind}: ${route.namespace}/${route.name} · ${route.host} ${route.path} · Контроллер: ${route.controller} · Порт backend: ${JSON.stringify(route.port)}`);
  link('user','ingress');
  card('svc',2,100,svc?svc.name:route.internal||'Service не найден',svc?serviceType(svc)+' · '+svc.ip:route.internal?'Внутренний сервис Traefik':'Нет backend Service','service',svc?null:!!route.internal,svc?`Service ${svc.id} · ${serviceType(svc)} · ${svc.external||svc.ip} · Порты: ${svc.ports.map(p=>p.port+' → '+p.targetPort).join(', ')} · Endpoints: ${endpoints.length}`:route.internal?'Внутренний обработчик Traefik '+route.internal+', не Kubernetes Service.':'Backend Service не найден или тип backend не поддерживается.');
@@ -106,8 +107,8 @@ async function refreshGraph(){
  const cluster=selectedCluster;
  if(graphCluster!==cluster){graphData=null;$('pod-map').replaceChildren();graphSignature='';$('graph-route-info').replaceChildren();$('cluster-graph').replaceChildren();$('graph-route').replaceChildren();$('graph-detail').textContent='Загружаем карту выбранного кластера…';}
  $('graph-status').textContent='Получаем данные Kubernetes…';
- try{const data=await api('topology');if(cluster!==selectedCluster)return;renderMetricsServer(data.metricsServer||{ready:false});const old=$('graph-route').value;const signature=JSON.stringify([cluster,data.nodes,data.services,data.pods,data.routes,data.endpoints]);const changed=signature!==graphSignature;graphSignature=signature;graphCluster=cluster;graphData=data;drawPlacement();$('graph-route').replaceChildren();
- for(const r of data.routes){const o=document.createElement('option');o.value=r.id;o.textContent=`${routeURLs(r)[0]||r.host+' '+r.path} → ${r.namespace}/${r.name}`;$('graph-route').append(o)}
+ try{const data=await api('topology');if(cluster!==selectedCluster)return;renderMetricsServer(data.metricsServer||{ready:false});const old=$('graph-route').value;const signature=JSON.stringify([cluster,data.controllers,data.nodes,data.services,data.pods,data.routes,data.endpoints]);const changed=signature!==graphSignature;graphSignature=signature;graphCluster=cluster;graphData=data;drawPlacement();$('graph-route').replaceChildren();
+ for(const r of data.routes){const o=document.createElement('option');o.value=r.id;o.textContent=r.controllerOnly?`${r.name} · контроллер без маршрутов`:`${routeURLs(r)[0]||r.host+' '+r.path} → ${r.namespace}/${r.name} · ${r.controller}`;$('graph-route').append(o)}
  if(data.routes.some(r=>r.id===old))$('graph-route').value=old;
  else {const demo=data.routes.find(r=>r.host.startsWith('nginx.'));if(demo)$('graph-route').value=demo.id;}
  $('graph-status').textContent=(data.warning?data.warning+' · ':'')+'Обновлено '+new Date(data.updated*1000).toLocaleTimeString();if(changed){$('graph-detail').textContent='Нажмите на Ingress, Service, Pod или узел — здесь появятся подробности.';drawGraph();}
@@ -152,7 +153,7 @@ function resourceButton(label,fn,cls='button secondary'){const b=element('button
 function showResource(type,item){resourceSelected={type,key:resourceKey(item),cluster:selectedCluster};renderResourceDetail(item);renderResources(true);}
 function renderResourceDetail(item){
  const body=$('resource-detail-body');body.replaceChildren();$('resource-detail').hidden=false;
- const resourceType=resourceSelected.type;const yamlActions=element('div',undefined,'resource-yaml-actions');yamlActions.append(resourceButton('Просмотреть YAML',()=>openResourceYaml(resourceType,item)),resourceButton('↓ Скачать YAML',()=>openResourceYaml(resourceType,item,true)));body.append(yamlActions);
+ const resourceType=resourceSelected.type;const yamlActions=element('div',undefined,'resource-yaml-actions');yamlActions.append(resourceButton('Просмотреть YAML',()=>openResourceYaml(resourceType,item)),resourceButton('↓ Скачать YAML',()=>openResourceYaml(resourceType,item,true)));yamlActions.append(resourceButton('Редактировать',()=>startResourceEdit(resourceType,item)),resourceButton('Удалить',()=>deleteResource(resourceType,item),'button secondary danger'));body.append(yamlActions);
  if(resourceSelected.type==='pvcs'){body.append(renderPVC(item));for(const name of item.pods){const pod=resourceItems().pods.find(p=>p.namespace===item.namespace&&p.name===name);if(pod)body.append(resourceButton('Pod → '+name,()=>showResource('pods',pod)))}return;}
  body.append(element('h3',item.name),element('span',item.namespace,'pvc-namespace-badge'));
  const list=element('dl',undefined,'pvc-details');const entry=(label,value)=>list.append(element('dt',label),element('dd',value||'—'));
@@ -187,7 +188,7 @@ function podTableHead(pods,filter){
   }
   row.append(th);
  }
- head.append(row);return head;
+ row.append(element('th','Действия'));head.append(row);return head;
 }
 const podReset=resourceButton('Сбросить фильтры',()=>{Object.assign(resourceFilter(),{podName:'',podStatus:'',podContainer:'',podNode:'',podSort:'name',podDirection:'asc'});renderResources(true)},'column-reset');
 $('resource-summary').after(podReset);
@@ -209,9 +210,9 @@ function renderResources(force=false){
   if(!items.length)content.append(element('p','Ресурсов по выбранным фильтрам нет.','resource-empty'));
   const map=element('div',undefined,'resource-map');const groups=[...new Set(items.map(p=>p.node||'Не назначен'))];for(const node of groups){const column=element('article',undefined,'placement-node');column.append(element('h3',node));for(const p of items.filter(p=>(p.node||'Не назначен')===node)){const b=resourceButton('',()=>showResource('pods',p),'placement-pod '+(p.ready?'ready':'waiting'));b.append(element('strong',p.name),element('span',p.namespace+' · '+PodFilters.status(p)));column.append(b)}map.append(column)}content.append(map);
  }else{
-  const table=document.createElement('table');table.className='resource-table';const head=document.createElement('thead'),tr=document.createElement('tr');const headers=resourceTab==='pods'?['Имя','Namespace','Статус','Контейнеры','Узел','Рестарты']:resourceTab==='pvcs'?['Имя','Namespace','Размер','Статус','Сервер']:resourceTab==='secrets'?['Имя','Namespace','Тип','Ключи']:['Имя','Namespace','Статус / тип','Сводка'];for(const h of headers)tr.append(element('th',h));head.append(tr);table.append(resourceTab==='pods'?podTableHead(sets.pods,filter):head);const tbody=document.createElement('tbody');
+  const table=document.createElement('table');table.className='resource-table';const head=document.createElement('thead'),tr=document.createElement('tr');const headers=resourceTab==='pods'?['Имя','Namespace','Статус','Контейнеры','Узел','Рестарты']:resourceTab==='pvcs'?['Имя','Namespace','Размер','Статус','Сервер']:resourceTab==='secrets'?['Имя','Namespace','Тип','Ключи']:['Имя','Namespace','Статус / тип','Сводка'];headers.push('Действия');for(const h of headers)tr.append(element('th',h));head.append(tr);table.append(resourceTab==='pods'?podTableHead(sets.pods,filter):head);const tbody=document.createElement('tbody');
   if(!items.length){const empty=document.createElement('tr'),cell=element('td','Ресурсов по выбранным фильтрам нет.','resource-empty');cell.colSpan=headers.length;empty.append(cell);tbody.append(empty);}
-  for(const p of items){const row=document.createElement('tr');if(resourceSelected?.cluster===selectedCluster&&resourceSelected.type===resourceTab&&resourceSelected.key===resourceKey(p))row.className='selected';const name=document.createElement('td');const nameButton=resourceButton('',()=>showResource(resourceTab,p),'resource-name');const icon=element('span',{pods:'◇',pvcs:'▤',secrets:'⌘'}[resourceTab]||'▱','resource-type-icon');icon.setAttribute('aria-hidden','true');nameButton.append(icon,element('span',p.name));name.append(nameButton);row.append(name);const values=resourceTab==='pods'?[p.namespace,PodFilters.status(p),PodFilters.containers(p).join(', ')||'—',p.node||'Не назначен',String((p.statuses||[]).reduce((a,c)=>a+c.restarts,0))]:resourceTab==='pvcs'?[p.namespace,p.capacity,p.phase,p.location?.server||(p.location?.nodes||[]).map(n=>n.name).join(', ')||'—']:resourceTab==='secrets'?[p.namespace,p.type,p.keys.join(', ')]:[p.namespace,p.state,p.summary];for(const [index,value] of values.entries()){const td=element('td');const isStatus=(resourceTab==='pods'&&index===1)||(resourceTab==='pvcs'&&index===2);if(index===0)td.append(element('span',value,'resource-ns-chip'));else if(isStatus){const tone=['Ready','Bound','Succeeded'].includes(value)?'good':['Pending','Running'].includes(value)?'warn':'bad';td.append(element('span',value,'resource-status-chip '+tone))}else if(resourceTab==='pods'&&index===2){for(const c of (p.containers||[])){const line=element('div',undefined,'container-usage');line.append(element('span',c.name));const usage=element('small',c.usage?c.usage.cpu.toFixed(1)+'m CPU · '+c.usage.memory.toFixed(1)+' MiB':'Метрики недоступны');usage.title=c.usage?'Замер: '+c.usage.timestamp+' · окно '+c.usage.window:'Нет текущего замера Metrics Server';line.append(usage);td.append(line)}}else td.append(element('span',value));row.append(td)}if(resourceTab==='pods')for(const key of ['cpu','memory']){const total=PodFilters.usage(p,key,filter.podContainer);const cell=element('td',total===null?'—':total.toFixed(1),'pod-usage-total');cell.title=filter.podContainer?'Потребление контейнера '+filter.podContainer:'Суммарное потребление контейнеров Pod';row.append(cell)}row.onclick=e=>{if(!e.target.closest('button'))showResource(resourceTab,p)};tbody.append(row)}table.append(tbody);content.append(table);
+  for(const p of items){const row=document.createElement('tr');if(resourceSelected?.cluster===selectedCluster&&resourceSelected.type===resourceTab&&resourceSelected.key===resourceKey(p))row.className='selected';const name=document.createElement('td');const nameButton=resourceButton('',()=>showResource(resourceTab,p),'resource-name');const icon=element('span',{pods:'◇',pvcs:'▤',secrets:'⌘'}[resourceTab]||'▱','resource-type-icon');icon.setAttribute('aria-hidden','true');nameButton.append(icon,element('span',p.name));name.append(nameButton);row.append(name);const values=resourceTab==='pods'?[p.namespace,PodFilters.status(p),PodFilters.containers(p).join(', ')||'—',p.node||'Не назначен',String((p.statuses||[]).reduce((a,c)=>a+c.restarts,0))]:resourceTab==='pvcs'?[p.namespace,p.capacity,p.phase,p.location?.server||(p.location?.nodes||[]).map(n=>n.name).join(', ')||'—']:resourceTab==='secrets'?[p.namespace,p.type,p.keys.join(', ')]:[p.namespace,p.state,p.summary];for(const [index,value] of values.entries()){const td=element('td');const isStatus=(resourceTab==='pods'&&index===1)||(resourceTab==='pvcs'&&index===2);if(index===0)td.append(element('span',value,'resource-ns-chip'));else if(isStatus){const tone=['Ready','Bound','Succeeded'].includes(value)?'good':['Pending','Running'].includes(value)?'warn':'bad';td.append(element('span',value,'resource-status-chip '+tone))}else if(resourceTab==='pods'&&index===2){for(const c of (p.containers||[])){const line=element('div',undefined,'container-usage');line.append(element('span',c.name));const usage=element('small',c.usage?c.usage.cpu.toFixed(1)+'m CPU · '+c.usage.memory.toFixed(1)+' MiB':'Метрики недоступны');usage.title=c.usage?'Замер: '+c.usage.timestamp+' · окно '+c.usage.window:'Нет текущего замера Metrics Server';line.append(usage);td.append(line)}}else td.append(element('span',value));row.append(td)}if(resourceTab==='pods')for(const key of ['cpu','memory']){const total=PodFilters.usage(p,key,filter.podContainer);const cell=element('td',total===null?'—':total.toFixed(1),'pod-usage-total');cell.title=filter.podContainer?'Потребление контейнера '+filter.podContainer:'Суммарное потребление контейнеров Pod';row.append(cell)}const actions=element('td',undefined,'resource-row-actions');const actionType=resourceTab;actions.append(resourceButton('Редактировать',()=>startResourceEdit(actionType,p)),resourceButton('Удалить',()=>deleteResource(actionType,p),'button secondary danger'));row.append(actions);row.onclick=e=>{if(!e.target.closest('button'))showResource(resourceTab,p)};tbody.append(row)}table.append(tbody);content.append(table);
  }
  if(nameCursor&&$('column-podName')){$('column-podName').focus({preventScroll:true});$('column-podName').setSelectionRange(...nameCursor);}
  if(resourceSelected){const selected=resourceSelected.cluster===selectedCluster&&sets[resourceSelected.type].find(p=>resourceKey(p)===resourceSelected.key);if(!selected){resourceSelected=null;$('resource-detail').hidden=true}else renderResourceDetail(selected);}
@@ -234,15 +235,54 @@ async function openResourceYaml(type,item,download=false){
  const output=element('pre','Загрузка YAML…','resource-yaml-output');$('lab-extra').append(output);
  try{const data=await api('resource-yaml',{type,name:item.name,namespace:item.namespace});if(cluster!==selectedCluster||!output.isConnected)return;output.textContent=data.yaml;
  const save=()=>{const blob=new Blob([data.yaml],{type:'application/yaml;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=data.filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)};
- const controls=element('div',undefined,'resource-yaml-actions');if(!state?.external)controls.append(resourceButton('Редактировать YAML',()=>editResourceYaml(type,item,data.yaml)));controls.append(resourceButton('↓ Скачать YAML',save));$('lab-extra').prepend(controls);if(download)save();
+ const controls=element('div',undefined,'resource-yaml-actions');controls.append(resourceButton('Редактировать YAML',()=>editResourceYaml(type,item,data.yaml)));controls.append(resourceButton('↓ Скачать YAML',save));$('lab-extra').prepend(controls);if(download)save();
  }catch(e){if(output.isConnected)output.textContent='Не удалось получить YAML: '+e.message}
 }
 
-function editResourceYaml(type,item,source){
- labOpen('Редактировать YAML · '+item.name,'Проверьте изменения перед применением. Изменение spec может перезапустить Pod. Поле status не редактируется; имя, namespace, uid и resourceVersion должны сохраниться.',null);
+function editResourceYaml(type,item,source,creating=false){
+ labOpen((creating?'Создать ресурс · ':'Редактировать YAML · ')+item.name,'Проверьте изменения перед применением. Изменение spec может перезапустить Pod. Поле status не редактируется; имя, namespace, uid и resourceVersion должны сохраниться.',null);
  const editor=document.createElement('textarea');editor.className='resource-yaml-editor';editor.value=source;editor.spellcheck=false;editor.setAttribute('aria-label','Редактор YAML');
  const preview=element('div',undefined,'resource-yaml-diff');const message=element('p','','lab-note');message.setAttribute('role','status');const actions=element('div',undefined,'resource-yaml-actions');let token=null;
  const apply=resourceButton('Применить изменения',async()=>{try{sameCluster();apply.disabled=true;await api('yaml-apply',{token,confirmed:true});token=null;message.textContent='Изменения применены.';await Promise.allSettled([refreshExtraResources(),refreshGraph(),refreshPVCs(),refreshSecrets()])}catch(e){token=null;message.textContent=e.message}finally{apply.disabled=true}},'button primary');apply.disabled=true;
- const check=resourceButton('Проверить и показать изменения',async()=>{try{sameCluster();token=null;apply.disabled=true;check.disabled=true;const text=editor.value;message.textContent='Проверка Kubernetes…';const result=await api('yaml-preview',{type,name:item.name,namespace:item.namespace,yaml:text});if(!editor.isConnected||labCluster!==selectedCluster)return;if(editor.value!==text){message.textContent='Текст изменён. Повторите проверку.';return}preview.replaceChildren();for(const line of result.diff.split('\n'))preview.append(element('div',line||' ',line.startsWith('+')?'yaml-added':line.startsWith('-')?'yaml-removed':''));token=result.token;apply.disabled=!result.changed;message.textContent=result.changed?'Проверка пройдена. Просмотрите изменения и нажмите «Применить изменения».':'Изменений нет.'}catch(e){message.textContent=e.message}finally{check.disabled=false}});
- editor.oninput=()=>{token=null;apply.disabled=true;preview.replaceChildren();message.textContent='Текст изменён. Требуется повторная проверка.'};actions.append(check,apply);$('lab-extra').append(editor,actions,message,preview);
+ const check=resourceButton('Проверить и показать изменения',async()=>{try{sameCluster();token=null;apply.disabled=true;check.disabled=true;const text=editor.value;message.textContent='Проверка Kubernetes…';const result=await api('yaml-preview',{type,name:item.name,namespace:item.namespace,yaml:text,operation:creating?'create':'edit'});if(!editor.isConnected||labCluster!==selectedCluster)return;if(editor.value!==text){message.textContent='Текст изменён. Повторите проверку.';return}preview.replaceChildren();for(const line of result.diff.split('\n'))preview.append(element('div',line||' ',line.startsWith('+')?'yaml-added':line.startsWith('-')?'yaml-removed':''));token=result.token;apply.disabled=!result.changed;message.textContent=result.changed?'Проверка пройдена. Просмотрите изменения и нажмите «Применить изменения».':'Изменений нет.'}catch(e){message.textContent=e.message}finally{check.disabled=false}});
+ editor.oninput=()=>{token=null;apply.disabled=true;preview.replaceChildren();message.textContent='Текст изменён. Требуется повторная проверка.'};
+ if(creating){
+  const upload=element('div',undefined,'resource-yaml-upload'),copy=element('div');copy.append(element('strong','Манифест из файла'),element('small','YAML / YML · один ресурс выбранного типа · до 1 MiB'));
+  const file=document.createElement('input');file.type='file';file.accept='.yaml,.yml';file.hidden=true;file.setAttribute('aria-label','Загрузить YAML');
+  const pick=resourceButton('↑ Загрузить YAML',()=>file.click());const filename=element('p','Или отредактируйте шаблон ниже.','yaml-upload-filename');filename.setAttribute('role','status');
+  let readRevision=0;
+  file.onchange=async()=>{const selected=file.files[0];if(!selected)return;const revision=++readRevision,cluster=selectedCluster;token=null;apply.disabled=true;preview.replaceChildren();check.disabled=true;pick.disabled=true;editor.disabled=true;filename.textContent='Читаем '+selected.name+'…';
+   try{if(!/\.ya?ml$/i.test(selected.name))throw Error('Выберите файл .yaml или .yml');if(!selected.size||selected.size>1048576)throw Error('Файл должен быть непустым и не больше 1 MiB');const text=await selected.text();if(revision!==readRevision||!editor.isConnected||!$('lab-dialog').open||cluster!==selectedCluster)return;if(!text.trim())throw Error('Файл пуст');editor.value=text.replace(/^\uFEFF/,'');editor.oninput();filename.textContent=selected.name+' · '+Math.ceil(selected.size/1024)+' KiB · загружен';message.textContent='Файл загружен в редактор. Проверьте содержимое и нажмите «Проверить и показать изменения».';
+   }catch(e){if(filename.isConnected){filename.textContent=e.message;message.textContent='Файл не загружен. Выберите другой файл или отредактируйте шаблон.'}}
+   finally{if(revision===readRevision){check.disabled=false;pick.disabled=false;editor.disabled=false;file.value=''}}
+  };
+  upload.append(copy,pick,file,filename);$('lab-extra').append(upload);
+ }
+ actions.append(check,apply);$('lab-extra').append(editor,actions,message,preview);
 }
+
+async function startResourceEdit(type,item){
+ const cluster=selectedCluster;labOpen('Редактировать · '+item.name,'Загрузка текущего YAML…',null);const marker=element('p','Загружаем ресурс…');$('lab-extra').append(marker);
+ try{const data=await api('resource-yaml',{type,name:item.name,namespace:item.namespace});if(cluster===selectedCluster&&marker.isConnected&&$('lab-dialog').open)editResourceYaml(type,item,data.yaml)}catch(e){if(marker.isConnected)marker.textContent=e.message}
+}
+function createResource(){
+ const kinds={pods:['v1','Pod'],pvcs:['v1','PersistentVolumeClaim'],secrets:['v1','Secret'],configmaps:['v1','ConfigMap'],services:['v1','Service'],deployments:['apps/v1','Deployment'],statefulsets:['apps/v1','StatefulSet'],daemonsets:['apps/v1','DaemonSet'],jobs:['batch/v1','Job'],cronjobs:['batch/v1','CronJob'],ingresses:['networking.k8s.io/v1','Ingress']};
+ const [apiVersion,kind]=kinds[resourceTab],namespace=resourceFilter().namespace||'default';const obj={apiVersion,kind,metadata:{name:'new-resource',namespace}};
+ if(resourceTab==='secrets'){obj.type='Opaque';obj.stringData={key:'value'}}else if(resourceTab==='configmaps')obj.data={key:'value'};else {const pod={containers:[{name:'app',image:'nginx:alpine'}]};const template={metadata:{labels:{app:'new-resource'}},spec:pod};
+ if(resourceTab==='pods')obj.spec=pod;
+ else if(['deployments','statefulsets','daemonsets'].includes(resourceTab)){obj.spec={selector:{matchLabels:{app:'new-resource'}},template};if(resourceTab!=='daemonsets')obj.spec.replicas=1;if(resourceTab==='statefulsets')obj.spec.serviceName='new-resource'}
+ else if(resourceTab==='jobs'){pod.restartPolicy='Never';obj.spec={template}}
+ else if(resourceTab==='cronjobs'){pod.restartPolicy='Never';obj.spec={schedule:'0 * * * *',jobTemplate:{spec:{template}}}}
+ else if(resourceTab==='pvcs')obj.spec={accessModes:['ReadWriteOnce'],resources:{requests:{storage:'1Gi'}}};
+ else if(resourceTab==='services')obj.spec={selector:{app:'new-resource'},ports:[{port:80,targetPort:80}],type:'ClusterIP'};
+ else obj.spec={ingressClassName:'replace-with-ingress-class',rules:[{host:'app.example.com',http:{paths:[{path:'/',pathType:'Prefix',backend:{service:{name:'new-resource',port:{number:80}}}}]}}]};}
+
+ editResourceYaml(resourceTab,{name:kind,namespace},JSON.stringify(obj,null,2),true);$('lab-description').textContent='Заполните YAML ресурса. Перед созданием Kubernetes проверит манифест и ваши права.';
+}
+async function deleteResource(type,item){
+ let identity=null;labOpen('Удалить · '+item.name,'Удаление ресурса из '+item.namespace+'. '+(type==='pvcs'?'Удаление PVC может привести к потере данных. ':type==='secrets'?'Удаление Secret может нарушить доступ приложений; Helm Secrets хранят историю релиза. ':'')+'Зависимые ресурсы могут быть удалены, а управляемый Pod — создан заново.',async data=>{if(!identity)throw Error('Дождитесь загрузки ресурса');await api('resource-delete',{type,name:item.name,namespace:item.namespace,...identity,confirmed:true,confirmation:data.confirmation});$('lab-dialog').close();await Promise.allSettled([refreshExtraResources(),refreshGraph(),refreshPVCs(),refreshSecrets()])});
+ $('lab-dialog').dataset.requiresPreview='true';const field=labField('confirmation','Введите имя ресурса для удаления','','text');const status=element('p','Проверяем ресурс…','lab-note');$('lab-extra').append(status);$('lab-submit').textContent='Удалить';$('lab-submit').disabled=true;const cluster=selectedCluster;
+ field.oninput=()=>{const invalid=!identity||field.value!==item.name;$('lab-dialog').dataset.requiresPreview=String(invalid);$('lab-submit').disabled=invalid};
+ try{identity=await api('resource-delete',{type,name:item.name,namespace:item.namespace});if(!status.isConnected||cluster!==selectedCluster)return;status.textContent='Будет удалён '+identity.kind+' '+item.namespace+'/'+item.name;field.oninput()}catch(e){if(status.isConnected)status.textContent=e.message}
+}
+const addResource=resourceButton('＋ Добавить ресурс',createResource,'button primary');const resourceHeaderActions=element('div',undefined,'resource-header-actions');$('resources-refresh').before(resourceHeaderActions);resourceHeaderActions.append(addResource,$('resources-refresh'));

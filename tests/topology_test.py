@@ -37,3 +37,19 @@ class OwnershipTests(unittest.TestCase):
   self.assertEqual([c['kind'] for c in data['pods'][0]['workload']['chain']],['ReplicaSet','Deployment'])
   self.assertTrue(data['services'][0]['headless'])
   self.assertEqual(data['services'][1]['type'],'LoadBalancer')
+
+class MultiControllerTests(unittest.TestCase):
+ def test_standard_classes_and_nodeport(self):
+  for controller in ['nginx.org/ingress-controller','haproxy.org/ingress-controller','traefik.io/ingress-controller','example.org/controller']:
+   items=[{'kind':'IngressClass','metadata':{'name':'my-class','annotations':{'meta.helm.sh/release-name':'edge','meta.helm.sh/release-namespace':'edge'}},'spec':{'controller':controller}}, {'kind':'Service','metadata':{'name':'edge','namespace':'edge','labels':{'app.kubernetes.io/instance':'edge'}},'spec':{'type':'NodePort','ports':[{'port':80,'nodePort':30226}]}}, {'kind':'Ingress','metadata':{'name':'web','namespace':'dev'},'spec':{'ingressClassName':'my-class','rules':[{'host':'web.test','http':{'paths':[{'path':'/','backend':{'service':{'name':'web','port':{'number':80}}}}]}}]}}]
+   route=build(items)['routes'][0];self.assertIn(controller,route['controller']);self.assertEqual(route['entryPort'],30226);self.assertEqual(route['service'],'dev/web')
+ def test_controller_without_routes(self):
+  result=build([{'kind':'IngressClass','metadata':{'name':'lab-nginx'},'spec':{'controller':'nginx.org/ingress-controller'}}])
+  self.assertTrue(result['routes'][0]['controllerOnly']);self.assertIsNone(result['routes'][0]['service'])
+ def test_nginx_virtualserver(self):
+  result=build([{'kind':'VirtualServer','metadata':{'name':'web','namespace':'dev'},'spec':{'host':'web.test','upstreams':[{'name':'backend','service':'web','port':80}],'routes':[{'path':'/','action':{'pass':'backend'}}]}}])
+  self.assertEqual(result['routes'][0]['service'],'dev/web')
+ def test_traefik_tcp_udp(self):
+  for kind,protocol in [('IngressRouteTCP','TCP'),('IngressRouteUDP','UDP')]:
+   result=build([{'kind':kind,'metadata':{'name':'db','namespace':'dev'},'spec':{'routes':[{'services':[{'name':'db','port':5432}]}]}}])
+   self.assertEqual(result['routes'][0]['protocol'],protocol);self.assertEqual(result['routes'][0]['service'],'dev/db')

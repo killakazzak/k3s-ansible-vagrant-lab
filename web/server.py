@@ -217,7 +217,7 @@ TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.Lock()
 JOB = None
 INSTALL_QUEUE = InstallQueue()
-LAB_ACTIONS = {'metrics_install','rancher_install','rabbit_plugins','app_start','app_stop','app_restart','app_delete','app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
+LAB_ACTIONS = {'remote_traefik_publish','remote_rancher_install','remote_ingress_update','remote_ingress_delete','app_edit','remote_ingress_install','metrics_install','rancher_install','rabbit_plugins','app_start','app_stop','app_restart','app_delete','app_deploy','template_deploy','app_update','app_rollback','app_check','stand_stop','stand_start'}
 ACTIONS = LAB_ACTIONS | {'create', 'destroy', 'verify', 'add_master', 'add_worker', 'remove_master', 'remove_worker', 'resources', 'version'}
 DESTRUCTIVE = {'app_delete','destroy', 'remove_master', 'remove_worker', 'version'}
 
@@ -545,11 +545,26 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(409, {'error':'Карта появится после настройки кластера.'})
                 data = json.loads(capture(['./kubectl.sh', 'get', 'nodes,pods,services,ingresses.networking.k8s.io,endpointslices.discovery.k8s.io,replicasets.apps,deployments.apps,daemonsets.apps,statefulsets.apps,jobs.batch,cronjobs.batch', '-A', '-o', 'json', '--request-timeout=10s'], 15))
                 warning = None
+                # Discover installed APIs first: absence of a vendor CRD is normal.
+                optional=('ingressclasses.networking.k8s.io','ingressroutes.traefik.io','ingressroutetcps.traefik.io','ingressrouteudps.traefik.io','virtualservers.k8s.nginx.org','virtualserverroutes.k8s.nginx.org','transportservers.k8s.nginx.org')
                 try:
-                    extra = json.loads(capture(['./kubectl.sh', 'get', 'ingressroutes.traefik.io', '-A', '-o', 'json', '--request-timeout=5s'], 8))
-                    data['items'].extend(extra.get('items', []))
+                    available=set(capture(['./kubectl.sh','api-resources','--verbs=list','-o','name','--request-timeout=5s'],10).split())
+                    root=active_root();env=cluster_env(root)
+                    from concurrent.futures import ThreadPoolExecutor
+                    def optional_objects(resource):
+                        try:
+                            proc=subprocess.run([str(root/'kubectl.sh'),'get',resource,'-A','-o','json','--request-timeout=5s'],cwd=root,env=env,capture_output=True,text=True,timeout=8)
+                            if proc.returncode:return [],resource
+                            return json.loads(proc.stdout).get('items',[]),None
+                        except Exception:return [],resource
+                    failures=[]
+                    with ThreadPoolExecutor(max_workers=4) as pool:
+                        for objects,failed in pool.map(optional_objects,[name for name in optional if name in available]):
+                            data['items'].extend(objects)
+                            if failed:failures.append(failed)
+                    if failures:warning='Часть ресурсов недоступна (проверьте RBAC): '+', '.join(failures)
                 except Exception:
-                    warning = 'IngressRoute Traefik недоступны; показаны стандартные Ingress.'
+                    warning='Не удалось определить дополнительные API; показаны стандартные Ingress.'
                 result = topology.build(data['items'])
                 result['metricsServer'] = {'ready': False, 'installed': any(o.get('kind') == 'Deployment' and o.get('metadata', {}).get('namespace') == 'kube-system' and o.get('metadata', {}).get('name') == 'metrics-server' for o in data['items'])}
                 try:
@@ -591,7 +606,7 @@ class Handler(BaseHTTPRequestHandler):
         global JOB, STOPPING
         if not self.allowed():
             return
-        if self.path not in ('/api/gitlab-secret', '/api/connections', '/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods', '/api/app-access', '/api/resource-yaml', '/api/yaml-preview', '/api/yaml-apply'):
+        if self.path not in ('/api/app-settings', '/api/gitlab-secret', '/api/connections', '/api/action', '/api/clusters', '/api/kubectl', '/api/terminal', '/api/shutdown', '/api/templates', '/api/pod', '/api/pods', '/api/app-access', '/api/resource-yaml', '/api/yaml-preview', '/api/yaml-apply', '/api/resource-delete'):
             return self.reply(404, {'error': 'Не найдено'})
         try:
             length = int(self.headers.get('Content-Length', 0))
@@ -603,6 +618,28 @@ class Handler(BaseHTTPRequestHandler):
             if remote_clusters.external(active_root()):
                 remote_clusters.permit(self.path,data)
             if self.path == '/api/connections':
+                if data.get('operation') in ('rancher-preview','rancher-status'):
+                    import remote_rancher
+                    return self.reply(200,remote_rancher.preview(ROOT,ENV,active_root(),data) if data['operation']=='rancher-preview' else remote_rancher.status(ROOT,ENV,active_root()))
+                if data.get('operation') == 'traefik-credentials':
+                    import traefik_public
+                    return self.reply(200,traefik_public.credentials(ROOT,ENV,active_root()))
+                if data.get('operation') == 'ingress-list':
+                    import remote_ingress
+                    return self.reply(200,dict(controllers=remote_ingress.inventory(ROOT, ENV, active_root())))
+                if data.get('operation') in ('ingress-preview','prepare-helm'):
+                    import remote_ingress
+                    if not (active_root()/'kubeconfig').is_file():raise ValueError('Доступ к Kubernetes ещё не настроен')
+                    return self.reply(200, remote_ingress.prepare_helm(ROOT) if data['operation']=='prepare-helm' else remote_ingress.preview(ROOT, ENV, active_root(), data))
+                if data.get('operation') == 'publication-address':
+                    with LOCK:
+                        address=remote_clusters.publication_ip(active_root(),data.get('ip',''))
+                    return self.reply(200,dict(publicationIP=address))
+                if data.get('operation') == 'app-options':
+                    apps=lab_apps.Apps(active_root(),cluster_env(active_root()))
+                    return self.reply(200,dict(storageClasses=[x['metadata']['name'] for x in apps.get('storageclasses')['items']],ingressClasses=[x['metadata']['name'] for x in apps.get('ingressclasses')['items']],publicationEndpoints=apps.publication_endpoints(),publicationIP=remote_clusters.publication_ip(active_root())))
+                if data.get('operation') == 'verify':
+                    return self.reply(200, remote_clusters.verify(ROOT, ENV, active_root()))
                 with LOCK:
                     if JOB and (JOB['state']=='running' or JOB.get('dispatching')):raise ValueError('Дождитесь завершения операции')
                     operation=data.get('operation')
@@ -628,11 +665,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if STOPPING:
                 return self.reply(409, {'error':'Веб-сервер завершает работу.'})
+            if self.path == '/api/app-settings':
+                import app_editor
+                return self.reply(200,app_editor.settings(lab_apps.Apps(active_root(),cluster_env(active_root())),data))
             if self.path == '/api/gitlab-secret':
                 import gitlab_apps
                 with LOCK:
                     if JOB and (JOB['state']=='running' or JOB.get('dispatching')):raise ValueError('Дождитесь завершения операции')
                     root=active_root()
+                    if data.get('operation')=='rotate-runner':return self.reply(200,gitlab_apps.rotate_runner_token(lab_apps.Apps(root,cluster_env(root)),data))
                     return self.reply(201,gitlab_apps.save_secret(lab_apps.Apps(root,cluster_env(root)),data,lab_apps.dns,lab_apps.namespace))
             if self.path == '/api/templates':
                 if data.get('operation') in ('storage-options','check','check-storage','suggest-name','editor-storage'):
@@ -650,6 +691,10 @@ class Handler(BaseHTTPRequestHandler):
                     if operation=='from_apps':return self.reply(200, lab_apps.Apps(active_root(),cluster_env(active_root())).template_from_apps(data))
                     if operation!='save':raise ValueError('Неизвестная операция с шаблоном')
                     return self.reply(200, lab_apps.save_template(data))
+            if self.path == '/api/resource-delete':
+                with LOCK:
+                    if JOB and JOB['state']=='running':raise ValueError('Дождитесь завершения текущей операции')
+                    return self.reply(200,lab_apps.Apps(active_root(),cluster_env(active_root())).resource_delete(data))
             if self.path in ('/api/yaml-preview','/api/yaml-apply'):
                 with LOCK:
                     if JOB and (JOB['state']=='running' or JOB.get('dispatching')):return self.reply(409,{'error':'Дождитесь завершения текущей операции.'})
@@ -660,12 +705,13 @@ class Handler(BaseHTTPRequestHandler):
                         candidate,diff=apps.yaml_preview(data)
                         token=secrets.token_urlsafe(32)
                         if len(YAML_PREVIEWS)>=32:YAML_PREVIEWS.pop(next(iter(YAML_PREVIEWS)))
-                        YAML_PREVIEWS[token]=dict(root=str(root),candidate=candidate,expires=time.time()+300)
+                        YAML_PREVIEWS[token]=dict(root=str(root),candidate=candidate,operation=data.get('operation','edit'),expires=time.time()+300)
                         return self.reply(200,dict(token=token,diff=diff,changed=bool(diff)))
                     if data.get('confirmed') is not True:raise ValueError('Подтвердите применение изменений')
                     preview=YAML_PREVIEWS.get(data.get('token',''))
                     if not preview or preview['root']!=str(root):raise ValueError('Просмотр изменений устарел. Проверьте YAML повторно.')
-                    result=apps.yaml_apply(preview['candidate'])
+                    result=json.loads(apps.kubectl(['create','-f','-','-o','json'],preview['candidate'])) if preview.get('operation')=='create' else apps.yaml_apply(preview['candidate'])
+                    result=dict(ok=True)
                     del YAML_PREVIEWS[data['token']]
                     return self.reply(200,result)
             if self.path == '/api/resource-yaml':
@@ -722,6 +768,14 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('Для удаления данных введите УДАЛИТЬ')
             if not isinstance(data.get('params', {}), dict):
                 raise ValueError('Некорректные параметры')
+            if action in ('remote_ingress_update','remote_ingress_delete'):
+                import remote_ingress
+                if not (active_root()/'kubeconfig').is_file():raise ValueError('Доступ к Kubernetes ещё не настроен')
+                remote_ingress.validate_management(data.get('params',{}),action=='remote_ingress_delete')
+            if action=='remote_ingress_install':
+                import remote_ingress
+                if not (active_root()/'kubeconfig').is_file():raise ValueError('Доступ к Kubernetes ещё не настроен')
+                remote_ingress.validate(data.get('params',{}))
             with LOCK:
                 if action in INSTALL_ACTIONS:
                     if STOPPING:raise ValueError('Веб-сервер завершает работу')
